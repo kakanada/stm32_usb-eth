@@ -105,7 +105,8 @@ uint16_t remote_port)` — принята датаграмма; `data` дейс�
 
 ### `void USB_ETH_IRQHandler(void)`
 
-Вызывать из `OTG_FS_IRQHandler()` (или `OTG_HS_IRQHandler()` при `USB_ETH_RHPORT=1`) вместо
+Вызывать из `OTG_FS_IRQHandler()` (или `OTG_HS_IRQHandler()` при `USB_ETH_RHPORT=1`, а также на
+STM32H7 с единственным USB — H72x/H73x/H7Ax/H7Bx, где OTG_HS работает как порт `0`) вместо
 `HAL_PCD_IRQHandler()`.
 
 ## Состояние сети
