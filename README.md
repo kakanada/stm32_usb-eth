@@ -101,7 +101,7 @@ define библиотека работает в режиме HOST.
 | `USB_ETH_MAX_TCP_SERVERS` | `4` | сколько TCP-портов можно слушать одновременно |
 | `USB_ETH_MAX_TCP_CONNECTIONS` | `4` | одновременных TCP-соединений (на все порты) |
 | `USB_ETH_MAX_UDP_SOCKETS` | `4` | открытых UDP-портов |
-| `USB_ETH_RHPORT` | `0` | `0` - OTG_FS, `1` - OTG_HS во встроенном FS PHY |
+| `USB_ETH_RHPORT` | `0` | `0` - OTG_FS, `1` - OTG_HS во встроенном FS PHY; на H7 с одним USB (H72x/H73x/H7Ax/H7Bx) OTG_HS - это порт `0` |
 | `USB_ETH_VBUS_SENSING` | `0` | `1`, если пин VBUS разведён и включён в CubeMX |
 | `USB_ETH_USB_VID` / `USB_ETH_USB_PID` | `0xCAFE` / `0x4011` | для серийного изделия - свой VID/PID |
 | `USB_ETH_STR_MANUFACTURER` / `USB_ETH_STR_PRODUCT` | `"Mechanic"` / `"STM32 USB Ethernet"` | имена в диспетчере устройств |

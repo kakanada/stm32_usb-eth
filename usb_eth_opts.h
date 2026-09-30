@@ -76,7 +76,9 @@
 /*  USB                                                                      */
 /* ------------------------------------------------------------------------- */
 
-/** Номер USB-порта TinyUSB: 0 - OTG_FS, 1 - OTG_HS (во встроенном FS PHY). */
+/** Номер USB-порта TinyUSB: 0 - OTG_FS, 1 - OTG_HS (во встроенном FS PHY). На STM32H7
+ *  с единственным USB (H72x/H73x/H7Ax/H7Bx) TinyUSB отображает OTG_HS на порт 0 -
+ *  оставить 0, прерывание - OTG_HS_IRQHandler(). */
 #ifndef USB_ETH_RHPORT
 #define USB_ETH_RHPORT 0U
 #endif
