@@ -127,6 +127,22 @@ STM32H7 с единственным USB - H72x/H73x/H7Ax/H7Bx, где OTG_HS р�
 
 Собственный IP платы или `0`, если сеть не готова.
 
+### `HAL_StatusTypeDef USB_ETH_GetStats(USB_ETH_Stats_t *stats)`
+
+Копирует счётчики канала USB <-> lwIP (с момента запуска). `HAL_ERROR` - `stats = NULL`.
+Как читать - раздел "Диагностика потерь" в `README.md`.
+
+| Поле `USB_ETH_Stats_t` | Описание |
+|---|---|
+| `rx_frames` | кадров от ПК передано в lwIP |
+| `rx_drop_no_pbuf` | кадров от ПК потеряно: кончились буферы приёма |
+| `rx_backpressure` | раз очередь приёма была полна - USB притормозил ПК (без потерь) |
+| `tx_frames` | кадров отправлено в USB |
+| `tx_drop_timeout` | кадров к ПК потеряно: USB занят дольше 20 мс |
+| `tx_drop_no_usb` | кадров к ПК потеряно: USB не подключён |
+| `pbuf_pool_size` | `USB_ETH_RX_PBUF_POOL_SIZE` |
+| `pbuf_pool_max_used` | максимум одновременно занятых буферов приёма |
+
 ## TCP
 
 ### `USB_ETH_TcpServer_t *USB_ETH_TCP_Listen(uint16_t port, const USB_ETH_TcpHandlers_t *handlers, void *user_ctx)`

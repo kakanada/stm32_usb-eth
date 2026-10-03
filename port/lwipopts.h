@@ -4,8 +4,8 @@
  * @brief   Настройки lwIP для usb_eth (NO_SYS, bare-metal). Выводятся из
  *          usb_eth_opts.h - править этот файл не нужно.
  * @author  Mechanic
- * @date    27.09.2026
- * @version 1.0
+ * @date    03.10.2026
+ * @version 1.1
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -29,7 +29,7 @@
 /* --- Память: куча lwIP для исходящих TCP-данных (TCP_WRITE_FLAG_COPY) --- */
 #define MEM_ALIGNMENT                   4
 #define MEM_SIZE                        (16 * 1024)
-#define PBUF_POOL_SIZE                  8   /* входящие кадры */
+#define PBUF_POOL_SIZE                  USB_ETH_RX_PBUF_POOL_SIZE   /* входящие кадры */
 
 /* --- Протоколы --- */
 #define LWIP_IPV4                       1
@@ -69,8 +69,20 @@
 #define LWIP_NETIF_LINK_CALLBACK        0
 #define LWIP_NETIF_STATUS_CALLBACK      0
 
+/* --- Статистика: только занятость пулов памяти (для USB_ETH_GetStats) --- */
+#define LWIP_STATS                      1
+#define MEMP_STATS                      1
+#define MEM_STATS                       0
+#define LINK_STATS                      0
+#define ETHARP_STATS                    0
+#define IP_STATS                        0
+#define IPFRAG_STATS                    0
+#define ICMP_STATS                      0
+#define UDP_STATS                       0
+#define TCP_STATS                       0
+#define SYS_STATS                       0
+
 /* --- Отладка выключена --- */
-#define LWIP_STATS                      0
 #define LWIP_DEBUG                      0
 
 #endif /* LWIPOPTS_H */

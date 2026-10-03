@@ -4,8 +4,8 @@
  * @brief   Ядро usb_eth: связка TinyUSB (CDC-NCM) <-> lwIP, режимы HOST
  *          (DHCP-сервер) / CLIENT (DHCP-клиент), отслеживание состояния сети.
  * @author  Mechanic
- * @date    27.09.2026
- * @version 1.0
+ * @date    03.10.2026
+ * @version 1.1
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -22,6 +22,7 @@
 #include "lwip/init.h"
 #include "lwip/netif.h"
 #include "lwip/pbuf.h"
+#include "lwip/stats.h"
 #include "lwip/timeouts.h"
 #include "lwip/etharp.h"
 #include "netif/ethernet.h"
@@ -72,6 +73,8 @@ static uint32_t s_rand_state;
 static struct pbuf *s_rx_queue[USB_ETH_RX_QUEUE_LEN];
 static uint8_t s_rx_head;
 static uint8_t s_rx_count;
+
+static USB_ETH_Stats_t s_stats;
 
 #if (USB_ETH_MODE == USB_ETH_MODE_CLIENT)
 static uint32_t s_link_up_tick;
@@ -169,16 +172,19 @@ static err_t usb_eth_linkoutput(struct netif *netif, struct pbuf *p)
     {
         if (!tud_ready())
         {
+            s_stats.tx_drop_no_usb++;
             return ERR_IF;
         }
         if (tud_network_can_xmit(p->tot_len))
         {
             /* tud_network_xmit копирует кадр сразу (tud_network_xmit_cb) */
             tud_network_xmit(p, 0U);
+            s_stats.tx_frames++;
             return ERR_OK;
         }
         if ((HAL_GetTick() - start) >= USB_ETH_TX_TIMEOUT_MS)
         {
+            s_stats.tx_drop_timeout++;
             USB_ETH_LOG(USB_ETH_LOG_CODE_TX_TIMEOUT, 0U, p->tot_len);
             return ERR_TIMEOUT;
         }
@@ -227,6 +233,8 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size)
     }
     if (s_rx_count >= USB_ETH_RX_QUEUE_LEN)
     {
+        /* Кадр остаётся в TinyUSB, новый приём не запускается - ПК ждёт (NAK) */
+        s_stats.rx_backpressure++;
         return false;
     }
 
@@ -234,6 +242,7 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size)
     if (p == NULL)
     {
         /* Нет памяти - кадр теряется (не задерживаем приём навсегда) */
+        s_stats.rx_drop_no_pbuf++;
         USB_ETH_LOG(USB_ETH_LOG_CODE_RX_DROP, 0U, size);
     }
     else
@@ -310,6 +319,7 @@ static void usb_eth_rx_drain(void)
         s_rx_head = (uint8_t)((s_rx_head + 1U) % USB_ETH_RX_QUEUE_LEN);
         s_rx_count--;
 
+        s_stats.rx_frames++;
         if (s_netif.input(p, &s_netif) != ERR_OK)
         {
             pbuf_free(p);
@@ -510,6 +520,18 @@ uint32_t USB_ETH_GetIp(void)
         return 0U;
     }
     return usb_eth_ip_from_lwip(netif_ip4_addr(&s_netif));
+}
+
+HAL_StatusTypeDef USB_ETH_GetStats(USB_ETH_Stats_t *stats)
+{
+    if (stats == NULL)
+    {
+        return HAL_ERROR;
+    }
+    *stats = s_stats;
+    stats->pbuf_pool_size = (uint16_t)USB_ETH_RX_PBUF_POOL_SIZE;
+    stats->pbuf_pool_max_used = (uint16_t)lwip_stats.memp[MEMP_PBUF_POOL]->max;
+    return HAL_OK;
 }
 
 /* ------------------------------------------------------------------------- */

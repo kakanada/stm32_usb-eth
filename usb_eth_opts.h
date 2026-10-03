@@ -4,8 +4,8 @@
  * @brief   Compile-time параметры usb_eth и их значения по умолчанию. Общий
  *          для usb_eth, lwipopts.h и tusb_config.h - единый источник истины.
  * @author  Mechanic
- * @date    27.09.2026
- * @version 1.0
+ * @date    03.10.2026
+ * @version 1.1
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -70,6 +70,14 @@
 /** Максимум одновременно открытых UDP-портов. */
 #ifndef USB_ETH_MAX_UDP_SOCKETS
 #define USB_ETH_MAX_UDP_SOCKETS 4U
+#endif
+
+/** Число буферов lwIP для входящих кадров (PBUF_POOL_SIZE), по ~1.5 КБ ОЗУ каждый. Любой
+ *  кадр, даже 60-байтный, занимает целый буфер. Их держат: очередь приёма (до 4), сегменты
+ *  TCP, пришедшие не по порядку, - на каждое соединение. Если в USB_ETH_GetStats() растёт
+ *  rx_drop_no_pbuf - увеличить. */
+#ifndef USB_ETH_RX_PBUF_POOL_SIZE
+#define USB_ETH_RX_PBUF_POOL_SIZE 16
 #endif
 
 /* ------------------------------------------------------------------------- */

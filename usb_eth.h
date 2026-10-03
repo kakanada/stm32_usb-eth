@@ -4,8 +4,8 @@
  * @brief   STM32 как сетевое устройство по USB (CDC-NCM + lwIP): публичный API
  *          - запуск стека, события сети, TCP-серверы и UDP-сокеты с колбэками.
  * @author  Mechanic
- * @date    27.09.2026
- * @version 1.0
+ * @date    03.10.2026
+ * @version 1.1
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -172,6 +172,27 @@ bool USB_ETH_IsNetUp(void);
  * @return IP (порядок байт хоста) или 0, если сеть не готова
  */
 uint32_t USB_ETH_GetIp(void);
+
+/** Счётчики канала USB <-> lwIP (с момента USB_ETH_Init, переполнение - по кругу). */
+typedef struct
+{
+    uint32_t rx_frames;          /**< кадров от ПК передано в lwIP */
+    uint32_t rx_drop_no_pbuf;    /**< кадров от ПК потеряно: кончились буферы lwIP */
+    uint32_t rx_backpressure;    /**< раз очередь приёма была полна - USB притормозил ПК
+                                      (кадры при этом не теряются) */
+    uint32_t tx_frames;          /**< кадров отправлено в USB */
+    uint32_t tx_drop_timeout;    /**< кадров к ПК потеряно: USB занят дольше 20 мс */
+    uint32_t tx_drop_no_usb;     /**< кадров к ПК потеряно: USB не подключён */
+    uint16_t pbuf_pool_size;     /**< USB_ETH_RX_PBUF_POOL_SIZE */
+    uint16_t pbuf_pool_max_used; /**< максимум одновременно занятых буферов приёма */
+} USB_ETH_Stats_t;
+
+/**
+ * @brief  Копия счётчиков канала - для диагностики потерь кадров.
+ * @param  stats куда скопировать
+ * @return HAL_OK; HAL_ERROR - stats = NULL
+ */
+HAL_StatusTypeDef USB_ETH_GetStats(USB_ETH_Stats_t *stats);
 
 /* ========================================================================= */
 /*  TCP                                                                      */
