@@ -4,8 +4,8 @@
  * @brief   Пример usb_eth: TCP эхо-сервер на порту 7 и отслеживание сети.
  *          Фрагменты вставляются в соответствующие USER CODE секции CubeMX.
  * @author  Mechanic
- * @date    27.09.2026
- * @version 1.0
+ * @date    03.10.2026
+ * @version 2.0
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -92,7 +92,7 @@ int main(void)
     while (1)
     {
         /* USER CODE BEGIN 3 */
-        USB_ETH_Process();
+        USB_Process();
         /* USER CODE END 3 */
     }
 }
@@ -102,7 +102,7 @@ int main(void)
  * void OTG_FS_IRQHandler(void)
  * {
  *     USER CODE BEGIN OTG_FS_IRQn 0
- *     USB_ETH_IRQHandler();
+ *     USB_IRQHandler();
  *     return;
  *     USER CODE END OTG_FS_IRQn 0
  *     HAL_PCD_IRQHandler(&hpcd_USB_OTG_FS);   <- больше не выполняется

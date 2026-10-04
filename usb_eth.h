@@ -5,7 +5,7 @@
  *          - запуск стека, события сети, TCP-серверы и UDP-сокеты с колбэками.
  * @author  Mechanic
  * @date    03.10.2026
- * @version 1.1
+ * @version 2.0
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -19,7 +19,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "main.h"
-#include "usb_eth_opts.h"
+#include "usb_dev.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,7 +46,7 @@ typedef struct USB_ETH_UdpSocket_s USB_ETH_UdpSocket_t;
 
 /**
  * @brief Обработчики событий TCP-сервера. Любой указатель может быть NULL.
- *        Все вызываются только из USB_ETH_Process(), не из прерывания.
+ *        Все вызываются только из USB_Process(), не из прерывания.
  */
 typedef struct
 {
@@ -92,7 +92,7 @@ struct USB_ETH_TcpServer_s
 };
 
 /**
- * @brief Обработчик входящей UDP-датаграммы (из USB_ETH_Process()).
+ * @brief Обработчик входящей UDP-датаграммы (из USB_Process()).
  * @param sock        сокет, получивший датаграмму
  * @param data        данные (действительны только внутри вызова)
  * @param len         длина данных
@@ -116,7 +116,7 @@ struct USB_ETH_UdpSocket_s
 };
 
 /**
- * @brief Обработчик изменения состояния сети (из USB_ETH_Process()).
+ * @brief Обработчик изменения состояния сети (из USB_Process()).
  * @param is_up true - сеть готова (есть IP), false - сеть потеряна
  * @param ip    собственный IP устройства (порядок байт хоста), 0 при is_up == false
  */
@@ -133,30 +133,32 @@ typedef void (*USB_ETH_NetCallback_t)(bool is_up, uint32_t ip);
 /* ========================================================================= */
 
 /**
- * @brief  Запускает USB-стек и lwIP. Вызывать один раз после
+ * @brief  Включает сеть: USB-устройство CDC-NCM и lwIP. Можно вызывать до или
+ *         после USB_COM_Init(), в любом порядке. Если COM уже работает у ПК,
+ *         плата переподключится к нему (~0,3 с). Вызывать после
  *         MX_USB_OTG_FS_PCD_Init() (нужны его тактирование и GPIO USB).
- *         Повторный вызов безопасен и возвращает HAL_OK.
- * @return HAL_OK - успех; HAL_ERROR - ошибка запуска или вызов из прерывания
+ *         Повторный вызов безопасен и возвращает HAL_OK. Обслуживание -
+ *         USB_Process(), прерывание - USB_IRQHandler() (usb_dev.h).
+ * @return HAL_OK - успех; HAL_ERROR - микроконтроллер не тянет сеть и COM сразу
+ *         (см. USB_IsCompositeSupported(), сеть не включена, COM работает
+ *         дальше), ошибка запуска или вызов из прерывания
  */
 HAL_StatusTypeDef USB_ETH_Init(void);
 
 /**
- * @brief Обслуживание стека: вызывать в while(1) как можно чаще, без
- *        задержек. Все колбэки библиотеки вызываются только отсюда.
+ * @brief  Выключает сеть: все TCP-соединения закрываются (on_disconnect с
+ *         USB_ETH_CLOSE_LINK_LOST), TCP-серверы и UDP-сокеты удаляются (указатели
+ *         на них становятся недействительны), сеть пропадает у ПК. Обработчик
+ *         USB_ETH_SetNetCallback() сохраняется. Если вызвана из колбэка сети,
+ *         выполняется по выходе из него, в том же USB_Process().
+ * @return HAL_OK (в т.ч. если сеть не была включена); HAL_ERROR - из прерывания
  */
-void USB_ETH_Process(void);
-
-/**
- * @brief Обработчик прерывания USB. Вызывать из OTG_FS_IRQHandler() (секция
- *        USER CODE BEGIN OTG_FS_IRQn 0) с последующим return - HAL_PCD_IRQHandler
- *        вызываться не должен.
- */
-void USB_ETH_IRQHandler(void);
+HAL_StatusTypeDef USB_ETH_DeInit(void);
 
 /**
  * @brief Регистрирует обработчик изменения состояния сети (NULL - отключить).
  *        Если сеть уже поднята, обработчик будет вызван с is_up == true при
- *        ближайшем USB_ETH_Process().
+ *        ближайшем USB_Process().
  * @param cb обработчик
  */
 void USB_ETH_SetNetCallback(USB_ETH_NetCallback_t cb);

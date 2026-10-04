@@ -1,20 +1,24 @@
 # usb_eth - настройка CubeMX
 
 Развёрнутая версия таблицы из раздела `## Требования к настройке в CubeMX` файла `README.md`.
-Описаны только настройки, от которых зависит работа usb_eth. Стек USB в библиотеке - TinyUSB: от
-CubeMX нужны лишь тактирование, выводы и прерывание USB, поэтому многие параметры периферии ни на
-что не влияют - TinyUSB заново настраивает USB-ядро при `USB_ETH_Init()`.
+Описаны только настройки, от которых зависит работа usb_eth (сеть и COM-порт). Стек USB в
+библиотеке - TinyUSB: от CubeMX нужны лишь тактирование, выводы и прерывание USB, поэтому многие
+параметры периферии ни на что не влияют - TinyUSB заново настраивает USB-ядро при первом
+`USB_ETH_Init()` / `USB_COM_Init()`.
 
 ## Какой USB-контроллер выбрать
 
-| Микроконтроллер | Периферия в CubeMX | `USB_ETH_RHPORT` | Обработчик прерывания |
+| Микроконтроллер | Периферия в CubeMX | `USB_DEV_RHPORT` | Обработчик прерывания |
 |---|---|---|---|
 | STM32H743/H753/H745/H747/H750 и подобные с двумя USB | USB_OTG_FS (PA11/PA12) | `0` | `OTG_FS_IRQHandler` |
 | STM32H72x/H73x/H7Ax/H7Bx (один USB) | USB_OTG_HS в режиме Internal FS Phy (PA11/PA12) | `0` | `OTG_HS_IRQHandler` |
+| STM32F446 (в т.ч. F446ZE на Nucleo-144), разведён OTG_FS (PA11/PA12) | USB_OTG_FS | `0` | `OTG_FS_IRQHandler` |
 | STM32F4/F7 с двумя USB, разведён OTG_FS | USB_OTG_FS | `0` | `OTG_FS_IRQHandler` |
 | STM32F4/F7, разведён OTG_HS во встроенном FS PHY (PB14/PB15) | USB_OTG_HS, Internal FS Phy | `1` | `OTG_HS_IRQHandler` |
 
-Проверено на железе только первое сочетание (STM32H743, OTG_FS).
+Проверено на железе только первое сочетание (STM32H743, OTG_FS, сеть). Сеть и COM-порт
+одновременно есть не на всех контроллерах - таблица в `README.md`, раздел "На каких
+микроконтроллерах работает"; на STM32F405/F407 они вместе работают только через OTG_HS.
 
 ## Connectivity -> USB_OTG_FS (или USB_OTG_HS) -> Mode
 
@@ -30,21 +34,22 @@ CubeMX нужны лишь тактирование, выводы и преры�
 | Параметр CubeMX | Диапазон | Рекомендуется | Пояснение |
 |---|---|---|---|
 | Speed | Full Speed 12MBit/s / High Speed | **Full Speed** | скорость, на которой работает TinyUSB в этой библиотеке |
-| VBUS sensing | Disabled / Enabled | **Disabled**, если VBUS не разведён | при Enabled без разведённого VBUS контроллер считает, что кабель не подключён, и ПК не видит устройство. Значение должно совпадать с глобальным define `USB_ETH_VBUS_SENSING` (`0` - Disabled, по умолчанию; `1` - Enabled) |
+| VBUS sensing | Disabled / Enabled | **Disabled**, если VBUS не разведён | при Enabled без разведённого VBUS контроллер считает, что кабель не подключён, и ПК не видит устройство. Значение должно совпадать с глобальным define `USB_DEV_VBUS_SENSING` (`0` - Disabled, по умолчанию; `1` - Enabled) |
 | Signal start of frame | Disabled / Enabled | **Disabled** | не используется |
 | Low power | Disabled / Enabled | **Disabled** | режим пониженного потребления USB библиотека не поддерживает |
 | Link Power Management | Disabled / Enabled | **Disabled** | не поддерживается |
 | Use dedicated end point 1 interrupt | Disabled / Enabled | **Disabled** | TinyUSB обслуживает все конечные точки одним прерыванием |
-| Physical interface, Endpoints, DMA | любые | не важно | TinyUSB перенастраивает ядро при `USB_ETH_Init()` |
+| Physical interface, Endpoints, DMA | любые | не важно | TinyUSB перенастраивает ядро при первом `USB_ETH_Init()` / `USB_COM_Init()` |
 
 ## NVIC Settings
 
 | Параметр CubeMX | Диапазон | Рекомендуется | Пояснение |
 |---|---|---|---|
-| USB On The Go FS/HS global interrupt | галка | **включено** | CubeMX создаст функцию `OTG_FS_IRQHandler` / `OTG_HS_IRQHandler`, в её секцию `USER CODE BEGIN ... 0` вставляется `USB_ETH_IRQHandler(); return;`. Если галку не ставить, обработчик нужно написать вручную в `USER CODE BEGIN 1` того же `*_it.c` |
+| USB On The Go FS/HS global interrupt | галка | **включено** | CubeMX создаст функцию `OTG_FS_IRQHandler` / `OTG_HS_IRQHandler`, в её секцию `USER CODE BEGIN ... 0` вставляется `USB_IRQHandler(); return;`. Если галку не ставить, обработчик нужно написать вручную в `USER CODE BEGIN 1` того же `*_it.c` |
 | Preemption Priority | 0..15 | **5..10** (ниже SysTick, если от него зависят тайминги) | в прерывании выполняется только короткий разбор событий USB, сеть обслуживается в главном цикле; критичных требований к приоритету нет |
 
-Включает прерывание в NVIC сама TinyUSB при `USB_ETH_Init()`, а приоритет берётся из CubeMX.
+Включает прерывание в NVIC сама TinyUSB при первом `USB_ETH_Init()` / `USB_COM_Init()`, а
+приоритет берётся из CubeMX.
 Вызывать `HAL_PCD_IRQHandler()` нельзя: HAL и TinyUSB будут одновременно обрабатывать одни и те же
 флаги USB.
 
@@ -52,7 +57,7 @@ CubeMX нужны лишь тактирование, выводы и преры�
 
 | Параметр CubeMX | Рекомендуется | Пояснение |
 |---|---|---|
-| USB_DEVICE (ST USB Device Library) | **не включать** | стек USB - TinyUSB; два стека на одной периферии несовместимы |
+| USB_DEVICE (ST USB Device Library) | **не включать**, в т.ч. класс Communication Device Class (VCP) | стек USB - TinyUSB; два стека на одной периферии несовместимы. COM-порт даёт `USB_COM_Init()` - переход с кода CubeMX описан в `README.md` |
 | LWIP (из CubeMX) | **не включать** | используется lwIP из состава зависимостей библиотеки с её собственным `port/lwipopts.h` |
 | FREERTOS | не обязателен | библиотека рассчитана на главный цикл; с RTOS все вызовы usb_eth - из одной задачи |
 
@@ -63,6 +68,7 @@ CubeMX нужны лишь тактирование, выводы и преры�
 | Частота тактирования USB (вход мультиплексора USB) | ровно **48 МГц** | 48 МГц | USB Full Speed требует 48 МГц с точностью около +/-0,25%; при другой частоте ПК не определит устройство или будут ошибки передачи |
 | Источник 48 МГц на STM32H7 | PLL1Q / PLL3Q / HSI48 | **HSI48** | независим от остальных делителей PLL - не нужно менять тактирование другой периферии. Точности HSI48 на H743 хватило без CRS |
 | Источник 48 МГц на STM32F4/F7 | PLL48CLK (PLLQ / PLLSAI) | **PLLQ с ровно 48 МГц** | на F4 частота PLLQ задаётся делителем Q при выборе SYSCLK - подбирать вместе |
+| Источник 48 МГц на STM32F446 | CK48MSEL: PLLQ / PLLSAI_P | **PLLQ**, если SYSCLK кратна (например 168 МГц: PLL 336 МГц, /Q=7); иначе **PLLSAI_P** | при SYSCLK 180 МГц PLLQ ровно 48 МГц не даёт - в Clock Configuration выбрать для 48 МГц источник PLLSAIP и подобрать PLLSAI (N, /P) на 48 МГц |
 | CRS (Clock Recovery System, при HSI48) | выкл / по SOF USB | **выкл**, включать при сбоях | если появляются периодические ошибки CRC или отвалы USB - включить CRS с синхронизацией по USB SOF |
 
 **Если CubeMX не сохраняет HSI48 для USB на H7**, допишите вручную:
@@ -74,8 +80,9 @@ CubeMX нужны лишь тактирование, выводы и преры�
 ## Что сгенерированный код делает за библиотеку
 
 Функцию `MX_USB_OTG_FS_PCD_Init()` (или `MX_USB_OTG_HS_PCD_Init()`) нужно по-прежнему вызывать из
-`main()` **до** `USB_ETH_Init()`. Сам драйвер HAL PCD библиотека дальше не использует, но в этой
-функции через `HAL_PCD_MspInit()` выполняется то, без чего USB не заработает:
+`main()` **до** `USB_ETH_Init()` / `USB_COM_Init()`. Сам драйвер HAL PCD библиотека дальше
+не использует, но в этой функции через `HAL_PCD_MspInit()` выполняется то, без чего USB не
+заработает:
 
 - включение тактирования USB-контроллера;
 - выбор источника 48 МГц для USB;

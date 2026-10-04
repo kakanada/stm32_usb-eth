@@ -1,24 +1,26 @@
 # usb_eth - справочник по API
 
-Полный список публичных функций и типов. Справочник - сжатый пересказ комментариев в `usb_eth.h`
-и `usb_eth_opts.h`; при расхождениях ориентируйтесь на `.h`-файлы, они первичны. Как подключить
-библиотеку - см. `README.md`.
+Полный список публичных функций и типов. Справочник - сжатый пересказ комментариев в `usb_dev.h`,
+`usb_eth.h`, `usb_com.h` и `usb_dev_opts.h`; при расхождениях ориентируйтесь на `.h`-файлы, они
+первичны. Как подключить библиотеку - см. `README.md`.
 
 ## Оглавление
 
 - [Параметры сборки](#параметры-сборки)
-- [Типы](#типы)
-- [Инициализация и обслуживание](#инициализация-и-обслуживание)
-- [Состояние сети](#состояние-сети)
-- [TCP](#tcp)
-- [UDP](#udp)
+- [Общие функции (usb_dev.h)](#общие-функции-usb_devh)
+- [Сеть: типы (usb_eth.h)](#сеть-типы-usb_ethh)
+- [Сеть: включение и состояние](#сеть-включение-и-состояние)
+- [Сеть: TCP](#сеть-tcp)
+- [Сеть: UDP](#сеть-udp)
+- [COM-порт (usb_com.h)](#com-порт-usb_comh)
 - [Коды логов](#коды-логов)
 
 ---
 
 ## Параметры сборки
 
-Задаются глобальными define проекта (`-D...`), см. `usb_eth_opts.h` и таблицу в `README.md`.
+Задаются глобальными define проекта (`-D...`), см. `usb_dev_opts.h` и таблицу в `README.md`.
+Исключение - `USB_DEV_LOG_ENABLE`: его можно поменять и прямо в начале `usb_dev_opts.h`.
 
 | Макрос | Назначение |
 |---|---|
@@ -30,7 +32,29 @@
 Все IP-адреса в API - `uint32_t` в порядке байт хоста: `192.168.7.1` = `USB_ETH_IP4(192,168,7,1)`
 = `0xC0A80701`.
 
-## Типы
+## Общие функции (usb_dev.h)
+
+Подключаются и через `usb_eth.h`, и через `usb_com.h`.
+
+### `void USB_Process(void)`
+
+Обслуживание USB, сети и COM-порта. Вызывать в `while(1)` как можно чаще. Единственное место,
+откуда вызываются все колбэки библиотеки; здесь же применяется смена набора устройств после
+`Init`/`DeInit`. До первого `Init` и из прерывания ничего не делает.
+
+### `void USB_IRQHandler(void)`
+
+Вызывать из `OTG_FS_IRQHandler()` (или `OTG_HS_IRQHandler()` при `USB_DEV_RHPORT=1`, а также на
+STM32H7 с единственным USB - H72x/H73x/H7Ax/H7Bx, где OTG_HS работает как порт `0`) вместо
+`HAL_PCD_IRQHandler()`.
+
+### `bool USB_IsCompositeSupported(void)`
+
+`true` - USB-контроллер этого микроконтроллера (порт `USB_DEV_RHPORT`) тянет сеть и COM
+одновременно (5+ конечных точек: STM32H7, F446, F412, F413, F7...). `false` - работает одно
+устройство, `Init` второго вернёт `HAL_ERROR`, первое продолжит работать.
+
+## Сеть: типы (usb_eth.h)
 
 ### `USB_ETH_CloseReason_t`
 
@@ -40,7 +64,7 @@
 | `USB_ETH_CLOSE_REMOTE` | клиент корректно закрыл соединение |
 | `USB_ETH_CLOSE_RESET` | клиент сбросил соединение (RST) |
 | `USB_ETH_CLOSE_TIMEOUT` | клиент пропал: keepalive (~8 с) или повторы передачи исчерпаны |
-| `USB_ETH_CLOSE_LINK_LOST` | пропала сеть: отключён USB или потерян IP |
+| `USB_ETH_CLOSE_LINK_LOST` | пропала сеть: отключён USB, потерян IP, переподключение USB или `USB_ETH_DeInit()` |
 | `USB_ETH_CLOSE_ERROR` | прочая ошибка стека |
 
 ### `USB_ETH_TcpHandlers_t`
@@ -86,30 +110,45 @@ uint16_t remote_port)` - принята датаграмма; `data` дейст�
 `void (bool is_up, uint32_t ip)` - сеть готова (`is_up = true`, `ip` - адрес платы) или потеряна
 (`false`, `0`).
 
-## Инициализация и обслуживание
+### `USB_ETH_Stats_t`
+
+Счётчики канала USB <-> lwIP (с момента запуска), см. `USB_ETH_GetStats()`.
+
+| Поле | Описание |
+|---|---|
+| `rx_frames` | кадров от ПК передано в lwIP |
+| `rx_drop_no_pbuf` | кадров от ПК потеряно: кончились буферы приёма |
+| `rx_backpressure` | раз очередь приёма была полна - USB притормозил ПК (без потерь) |
+| `tx_frames` | кадров отправлено в USB |
+| `tx_drop_timeout` | кадров к ПК потеряно: USB занят дольше 20 мс |
+| `tx_drop_no_usb` | кадров к ПК потеряно: USB не подключён |
+| `pbuf_pool_size` | `USB_ETH_RX_PBUF_POOL_SIZE` |
+| `pbuf_pool_max_used` | максимум одновременно занятых буферов приёма |
+
+## Сеть: включение и состояние
 
 ### `HAL_StatusTypeDef USB_ETH_Init(void)`
 
-Запускает TinyUSB, lwIP, DHCP-сервер (HOST) или DHCP-клиент (CLIENT). Вызывать один раз после
-`MX_USB_OTG_FS_PCD_Init()`.
+Включает сеть: USB-устройство CDC-NCM, lwIP, DHCP-сервер (HOST) или DHCP-клиент (CLIENT).
+Вызывать после `MX_USB_OTG_FS_PCD_Init()`; порядок относительно `USB_COM_Init()` любой. Если COM
+уже работает у ПК, плата переподключится (~0,3 с).
 
 | Возврат | Значение |
 |---|---|
-| `HAL_OK` | успех, либо библиотека уже инициализирована |
-| `HAL_ERROR` | ошибка запуска USB/lwIP/DHCP или вызов из прерывания |
+| `HAL_OK` | успех, либо сеть уже включена |
+| `HAL_ERROR` | контроллер не тянет сеть и COM сразу (COM работает дальше); ошибка запуска USB/lwIP/DHCP; вызов из прерывания или из обработчика во время `USB_ETH_DeInit()` |
 
-### `void USB_ETH_Process(void)`
+### `HAL_StatusTypeDef USB_ETH_DeInit(void)`
 
-Обслуживание стека. Вызывать в `while(1)` как можно чаще. Единственное место, откуда вызываются
-все колбэки библиотеки. До `USB_ETH_Init()` и из прерывания ничего не делает.
+Выключает сеть: соединения закрываются (`on_disconnect` с `USB_ETH_CLOSE_LINK_LOST`), серверы и
+UDP-сокеты удаляются (указатели на них недействительны), `on_net(false, 0)`, сеть пропадает у ПК.
+Обработчик `USB_ETH_SetNetCallback()` сохраняется. Вызванная из колбэка сети выполняется по выходе
+из него в том же `USB_Process()`.
 
-### `void USB_ETH_IRQHandler(void)`
-
-Вызывать из `OTG_FS_IRQHandler()` (или `OTG_HS_IRQHandler()` при `USB_ETH_RHPORT=1`, а также на
-STM32H7 с единственным USB - H72x/H73x/H7Ax/H7Bx, где OTG_HS работает как порт `0`) вместо
-`HAL_PCD_IRQHandler()`.
-
-## Состояние сети
+| Возврат | Значение |
+|---|---|
+| `HAL_OK` | выключено (или не было включено) |
+| `HAL_ERROR` | вызов из прерывания |
 
 ### `void USB_ETH_SetNetCallback(USB_ETH_NetCallback_t cb)`
 
@@ -117,7 +156,7 @@ STM32H7 с единственным USB - H72x/H73x/H7Ax/H7Bx, где OTG_HS р�
 |---|---|
 | `cb` | обработчик изменения состояния сети; `NULL` - отключить |
 
-Если сеть уже готова, `cb(true, ip)` будет вызван при ближайшем `USB_ETH_Process()`.
+Если сеть уже готова, `cb(true, ip)` будет вызван при ближайшем `USB_Process()`.
 
 ### `bool USB_ETH_IsNetUp(void)`
 
@@ -129,26 +168,15 @@ STM32H7 с единственным USB - H72x/H73x/H7Ax/H7Bx, где OTG_HS р�
 
 ### `HAL_StatusTypeDef USB_ETH_GetStats(USB_ETH_Stats_t *stats)`
 
-Копирует счётчики канала USB <-> lwIP (с момента запуска). `HAL_ERROR` - `stats = NULL`.
-Как читать - раздел "Диагностика потерь" в `README.md`.
+Копирует счётчики (`USB_ETH_Stats_t`). `HAL_ERROR` - `stats = NULL`. Как читать - раздел
+"Диагностика потерь сети" в `README.md`.
 
-| Поле `USB_ETH_Stats_t` | Описание |
-|---|---|
-| `rx_frames` | кадров от ПК передано в lwIP |
-| `rx_drop_no_pbuf` | кадров от ПК потеряно: кончились буферы приёма |
-| `rx_backpressure` | раз очередь приёма была полна - USB притормозил ПК (без потерь) |
-| `tx_frames` | кадров отправлено в USB |
-| `tx_drop_timeout` | кадров к ПК потеряно: USB занят дольше 20 мс |
-| `tx_drop_no_usb` | кадров к ПК потеряно: USB не подключён |
-| `pbuf_pool_size` | `USB_ETH_RX_PBUF_POOL_SIZE` |
-| `pbuf_pool_max_used` | максимум одновременно занятых буферов приёма |
-
-## TCP
+## Сеть: TCP
 
 ### `USB_ETH_TcpServer_t *USB_ETH_TCP_Listen(uint16_t port, const USB_ETH_TcpHandlers_t *handlers, void *user_ctx)`
 
 Открывает порт на приём подключений. Можно вызывать сразу после `USB_ETH_Init()`, не дожидаясь
-сети; порт продолжает работать после переподключения USB.
+сети; порт продолжает работать после переподключения кабеля (до `USB_ETH_DeInit()`).
 
 | Параметр | Описание |
 |---|---|
@@ -156,9 +184,9 @@ STM32H7 с единственным USB - H72x/H73x/H7Ax/H7Bx, где OTG_HS р�
 | `handlers` | обработчики (копируются), не `NULL` |
 | `user_ctx` | значение по умолчанию для `conn->user_ctx` |
 
-Возврат: сервер или `NULL` (неверные параметры, пул занят, ошибка lwIP, до `Init`, из прерывания).
-Повторный вызов с тем же портом возвращает существующий сервер без изменения обработчиков.
-Если свободных слотов соединений нет, новый клиент отклоняется (сброс соединения).
+Возврат: сервер или `NULL` (неверные параметры, пул занят, ошибка lwIP, сеть не включена, из
+прерывания). Повторный вызов с тем же портом возвращает существующий сервер без изменения
+обработчиков. Если свободных слотов соединений нет, новый клиент отклоняется (сброс соединения).
 
 ### `HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, uint16_t len)`
 
@@ -192,7 +220,7 @@ STM32H7 с единственным USB - H72x/H73x/H7Ax/H7Bx, где OTG_HS р�
 | `HAL_OK` | закрыто |
 | `HAL_ERROR` | уже закрыто, `NULL`, вызов из прерывания |
 
-## UDP
+## Сеть: UDP
 
 ### `USB_ETH_UdpSocket_t *USB_ETH_UDP_Bind(uint16_t port, USB_ETH_UdpReceive_t on_receive, void *user_ctx)`
 
@@ -220,17 +248,85 @@ STM32H7 с единственным USB - H72x/H73x/H7Ax/H7Bx, где OTG_HS р�
 | `HAL_BUSY` | нет памяти lwIP |
 | `HAL_ERROR` | сеть не готова, неверные параметры, вызов из прерывания |
 
+## COM-порт (usb_com.h)
+
+### `USB_COM_RxCallback_t`
+
+`void (const uint8_t *data, uint16_t len)` - приняты байты (1..64 за вызов), вызывается из
+`USB_Process()`; `data` действителен только внутри вызова; границы сообщений не сохраняются.
+
+### `HAL_StatusTypeDef USB_COM_Init(void)`
+
+Включает виртуальный COM-порт (CDC-ACM). Порядок относительно `USB_ETH_Init()` любой; если сеть
+уже работает у ПК, плата переподключится (~0,3 с).
+
+| Возврат | Значение |
+|---|---|
+| `HAL_OK` | успех, либо COM уже включён |
+| `HAL_ERROR` | контроллер не тянет сеть и COM сразу (сеть работает дальше), ошибка запуска USB, вызов из прерывания |
+
+### `HAL_StatusTypeDef USB_COM_DeInit(void)`
+
+Выключает COM-порт: он пропадает у ПК (при работающей сети - переподключение без COM).
+Обработчик приёма сохраняется. `HAL_OK` всегда, кроме вызова из прерывания (`HAL_ERROR`).
+
+### `void USB_COM_SetRxCallback(USB_COM_RxCallback_t cb)`
+
+Обработчик приёма; `NULL` - данные копятся в буфере (`USB_COM_RX_BUF_SIZE`) и читаются
+`USB_COM_Read()`. Пока буфер полон, ПК ждёт - байты не теряются. Можно вызывать в любой момент,
+в т.ч. до `Init`.
+
+### `HAL_StatusTypeDef USB_COM_Transmit(const uint8_t *data, uint16_t len)`
+
+Отправка без ожидания - целиком или ничего; данные копируются. Аналог `CDC_Transmit_FS()`.
+
+| Возврат | Значение |
+|---|---|
+| `HAL_OK` | данные в очереди (`len = 0` - тоже `HAL_OK`) |
+| `HAL_BUSY` | не помещаются в буфер передачи - повторить позже |
+| `HAL_ERROR` | COM не включён или не подключён к ПК, `data = NULL`, вызов из прерывания |
+
+Если порт на ПК не открыт, `HAL_BUSY` не бывает: в буфере остаются последние
+`USB_COM_TX_BUF_SIZE` байт, их получит программа, открывшая порт.
+
+### `HAL_StatusTypeDef USB_COM_TransmitString(const char *str)`
+
+`USB_COM_Transmit()` для строки с завершающим нулём (ноль не отправляется).
+
+### `uint16_t USB_COM_GetFreeSpace(void)`
+
+Сколько байт сейчас гарантированно примет `USB_COM_Transmit()`; `0` - COM не подключён.
+
+### `uint16_t USB_COM_Available(void)` / `uint16_t USB_COM_Read(uint8_t *buf, uint16_t max_len)`
+
+Режим без обработчика: сколько принятых байт ждут чтения / прочитать до `max_len` байт
+(возврат - прочитано байт, `0` - нет данных, COM не подключён, `buf = NULL`, из прерывания).
+
+### `bool USB_COM_IsReady(void)`
+
+`true` - COM включён и ПК сконфигурировал устройство (`USB_COM_Transmit()` работает).
+
+### `bool USB_COM_IsOpen(void)`
+
+`true` - порт открыт программой на ПК (сигнал DTR).
+
+### `uint32_t USB_COM_GetBaudRate(void)`
+
+Скорость, выбранная в программе на ПК, бит/с (только для информации - на USB не влияет); `0` -
+COM не подключён.
+
 ## Коды логов
 
-При `USB_ETH_LOG_ENABLE=1` события пишутся через `LOGGER_Log(code, source_id, value)`.
-Адресное пространство `0x42` закреплено в stm32_logger (`LOGGER_ENABLE_USB_ETH`).
+При `USB_DEV_LOG_ENABLE=1` события пишутся через `LOGGER_Log(code, source_id, value)`.
+
+### Сеть - `0x42`, `LOGGER_ENABLE_USB_ETH`
 
 | Код | Имя (`USB_ETH_LOG_CODE_*` / `LOG_CODE_USB_ETH_*`) | Приоритет | `source_id` | `value` |
 |---|---|---|---|---|
 | `0x4200` | `INIT_OK` | LOW | 0 | режим (0 HOST, 1 CLIENT) |
 | `0x4201` | `INIT_FAIL` | HIGH | 0 | этап: 1 USB, 2 netif, 3 DHCP |
-| `0x4202` | `USB_MOUNTED` | LOW | 0 | 0 |
-| `0x4203` | `USB_UNMOUNTED` | MEDIUM | 0 | 0 |
+| `0x4202` | `USB_MOUNTED` | LOW | 0 | 0 - сеть видна ПК |
+| `0x4203` | `USB_UNMOUNTED` | MEDIUM | 0 | 0 - сеть пропала у ПК |
 | `0x4204` | `NET_UP` | LOW | 0 | IP платы |
 | `0x4205` | `NET_DOWN` | MEDIUM | 0 | 0 |
 | `0x4206` | `DHCP_TIMEOUT` | MEDIUM | 0 | мс ожидания (15000) |
@@ -243,3 +339,19 @@ STM32H7 с единственным USB - H72x/H73x/H7Ax/H7Bx, где OTG_HS р�
 | `0x420D` | `SEND_NO_MEM` | MEDIUM | порт | запрошено байт |
 | `0x420E` | `LISTEN_FAIL` | HIGH | порт | код ошибки lwIP |
 | `0x420F` | `UDP_BIND_FAIL` | HIGH | порт | код ошибки lwIP |
+
+### USB и COM - `0x43`, `LOGGER_ENABLE_USB_DEV`
+
+| Код | Имя (`USB_DEV_LOG_CODE_*` / `LOG_CODE_USB_DEV_*`) | Приоритет | `source_id` | `value` |
+|---|---|---|---|---|
+| `0x4300` | `USB_START_FAIL` | HIGH | 0 | 0 |
+| `0x4301` | `INIT_REFUSED` | HIGH | устройство: 1 сеть, 2 COM | 0 |
+| `0x4302` | `USB_CONNECTED` | LOW | 0 | набор: бит 0 сеть, бит 1 COM |
+| `0x4303` | `USB_DISCONNECTED` | MEDIUM | 0 | набор |
+| `0x4304` | `REENUM` | LOW | 0 | новый набор |
+| `0x4305` | `COM_INIT` | LOW | 0 | 0 |
+| `0x4306` | `COM_DEINIT` | LOW | 0 | 0 |
+| `0x4307` | `COM_OPEN` | LOW | 0 | скорость, бит/с |
+| `0x4308` | `COM_CLOSE` | LOW | 0 | 0 |
+| `0x4309` | `COM_TX_BUSY` | MEDIUM | 0 | длина (раз на серию отказов) |
+| `0x430A` | `ETH_DEINIT` | LOW | 0 | 0 |

@@ -2,10 +2,10 @@
  ******************************************************************************
  * @file    lwipopts.h
  * @brief   Настройки lwIP для usb_eth (NO_SYS, bare-metal). Выводятся из
- *          usb_eth_opts.h - править этот файл не нужно.
+ *          usb_dev_opts.h - править этот файл не нужно.
  * @author  Mechanic
  * @date    03.10.2026
- * @version 1.1
+ * @version 2.0
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -16,9 +16,9 @@
 #ifndef LWIPOPTS_H
 #define LWIPOPTS_H
 
-#include "usb_eth_opts.h"
+#include "usb_dev_opts.h"
 
-/* --- Система: без ОС, весь стек обслуживается из USB_ETH_Process() --- */
+/* --- Система: без ОС, весь стек обслуживается из USB_Process() --- */
 #define NO_SYS                          1
 #define SYS_LIGHTWEIGHT_PROT            0   /* lwIP не вызывается из прерываний */
 #define LWIP_NETCONN                    0

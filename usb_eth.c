@@ -5,7 +5,7 @@
  *          (DHCP-сервер) / CLIENT (DHCP-клиент), отслеживание состояния сети.
  * @author  Mechanic
  * @date    03.10.2026
- * @version 1.1
+ * @version 2.0
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -17,6 +17,7 @@
 
 #include "usb_eth.h"
 #include "usb_eth_internal.h"
+#include "usb_dev_internal.h"
 
 #include "tusb.h"
 #include "lwip/init.h"
@@ -63,7 +64,10 @@ uint8_t tud_network_mac_address[6];
 
 static struct netif s_netif;
 static bool s_initialized;
-static bool s_usb_mounted;        /* выставляется из tud_mount_cb/tud_umount_cb */
+static bool s_lwip_started;       /* lwip_init() допустим только один раз */
+static bool s_in_process;         /* идёт обслуживание сети - внутри колбэков lwIP */
+static bool s_deinit_pending;     /* DeInit вызван из колбэка - выполнить по выходе */
+static bool s_deiniting;          /* идёт DeInit (вызываются обработчики пользователя) */
 static bool s_link_up;            /* состояние, уже применённое к netif */
 static bool s_net_up;             /* состояние, уже сообщённое пользователю */
 static bool s_net_cb_pending;     /* сообщить текущее состояние новому колбэку */
@@ -170,7 +174,9 @@ static err_t usb_eth_linkoutput(struct netif *netif, struct pbuf *p)
 
     for (;;)
     {
-        if (!tud_ready())
+        /* Не tud_ready(): при программном переподключении TinyUSB ещё считает
+         * себя подключённым, а кадр ушёл бы в никуда */
+        if (!usb_dev_func_mounted(USB_DEV_FUNC_ETH) || !tud_ready())
         {
             s_stats.tx_drop_no_usb++;
             return ERR_IF;
@@ -218,18 +224,18 @@ static err_t usb_eth_netif_init(struct netif *netif)
 }
 
 /**
- * @brief  Приём кадра от TinyUSB (вызывается из tud_task()). Кадр только
- *         копируется в очередь, в lwIP он уйдёт из USB_ETH_Process().
+ * @brief  Приём кадра от ПК (tud_network_recv_cb через usb_dev). Кадр только
+ *         копируется в очередь, в lwIP он уйдёт из USB_Process().
  * @param  src  данные кадра
  * @param  size длина
  * @return true - кадр принят/отброшен; false - очередь полна, TinyUSB
  *         повторит после tud_network_recv_renew()
  */
-bool tud_network_recv_cb(const uint8_t *src, uint16_t size)
+static bool usb_eth_recv(const uint8_t *src, uint16_t size)
 {
-    if (size == 0U)
+    if ((size == 0U) || !s_initialized)
     {
-        return true;
+        return true;   /* сеть выключена, а ПК ещё не узнал об этом - кадр не нужен */
     }
     if (s_rx_count >= USB_ETH_RX_QUEUE_LEN)
     {
@@ -276,22 +282,6 @@ uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg)
  */
 void tud_network_init_cb(void)
 {
-}
-
-/**
- * @brief Колбэк TinyUSB: хост сконфигурировал устройство.
- */
-void tud_mount_cb(void)
-{
-    s_usb_mounted = true;
-}
-
-/**
- * @brief Колбэк TinyUSB: устройство отключено от хоста.
- */
-void tud_umount_cb(void)
-{
-    s_usb_mounted = false;
 }
 
 /**
@@ -346,9 +336,11 @@ static bool usb_eth_ip_ready(void)
  */
 static void usb_eth_update_state(void)
 {
-    if (s_usb_mounted != s_link_up)
+    bool mounted = usb_dev_func_mounted(USB_DEV_FUNC_ETH);
+
+    if (mounted != s_link_up)
     {
-        s_link_up = s_usb_mounted;
+        s_link_up = mounted;
         if (s_link_up)
         {
             USB_ETH_LOG(USB_ETH_LOG_CODE_USB_MOUNTED, 0U, 0);
@@ -401,43 +393,110 @@ static void usb_eth_update_state(void)
     }
 }
 
+/**
+ * @brief Выключает сеть немедленно (вне колбэков lwIP): закрывает сокеты,
+ *        останавливает DHCP, удаляет netif, убирает сеть из состава USB.
+ */
+static void usb_eth_do_deinit(void)
+{
+    s_deinit_pending = false;
+    s_deiniting = true;   /* Init из обработчиков ниже вернёт HAL_ERROR */
+
+    usb_eth_sock_deinit();
+    if (s_net_up)
+    {
+        s_net_up = false;
+        USB_ETH_LOG(USB_ETH_LOG_CODE_NET_DOWN, 0U, 0);
+        if (s_net_cb != NULL)
+        {
+            s_net_cb(false, 0U);
+        }
+    }
+
+#if (USB_ETH_MODE == USB_ETH_MODE_HOST)
+    dhserv_free();
+#else
+    dhcp_release_and_stop(&s_netif);
+    dhcp_cleanup(&s_netif);
+#endif
+    netif_set_down(&s_netif);
+    netif_remove(&s_netif);
+
+    while (s_rx_count > 0U)
+    {
+        pbuf_free(s_rx_queue[s_rx_head]);
+        s_rx_queue[s_rx_head] = NULL;
+        s_rx_head = (uint8_t)((s_rx_head + 1U) % USB_ETH_RX_QUEUE_LEN);
+        s_rx_count--;
+    }
+    s_link_up = false;
+    s_net_cb_pending = false;
+    s_initialized = false;
+    s_deiniting = false;
+    (void)usb_dev_set_func(USB_DEV_FUNC_ETH, false);
+    USB_ETH_LOG(USB_DEV_LOG_CODE_ETH_DEINIT, 0U, 0);
+}
+
+/**
+ * @brief Обслуживание сети из USB_Process(): кадры в lwIP, таймеры, состояние
+ *        сети, отложенный DeInit.
+ */
+static void usb_eth_process(void)
+{
+    if (!s_initialized)
+    {
+        return;
+    }
+    s_in_process = true;
+    usb_eth_rx_drain();
+    sys_check_timeouts();
+    usb_eth_update_state();
+    s_in_process = false;
+
+    if (s_deinit_pending)
+    {
+        usb_eth_do_deinit();
+    }
+}
+
+/** Точки входа сети для ядра usb_dev (регистрируются в USB_ETH_Init()). */
+static const usb_dev_eth_hooks_t s_eth_hooks =
+{
+    .process = usb_eth_process,
+    .recv    = usb_eth_recv
+};
+
 /* ------------------------------------------------------------------------- */
 /*  Публичный API                                                            */
 /* ------------------------------------------------------------------------- */
 
 HAL_StatusTypeDef USB_ETH_Init(void)
 {
-    if (usb_eth_in_isr())
+    if (usb_eth_in_isr() || s_deiniting)
     {
         return HAL_ERROR;
     }
     if (s_initialized)
     {
+        s_deinit_pending = false;   /* DeInit+Init внутри одного колбэка - сеть остаётся */
         return HAL_OK;
     }
 
-    usb_eth_make_mac();
-    s_rand_state = usb_eth_uid_hash(HAL_GetTick()) | 1U;
-
-    /* --- USB --- */
-#if defined(TUP_USBIP_DWC2)
-    tud_configure_dwc2_t dwc2_cfg = CFG_TUD_CONFIGURE_DWC2_DEFAULT;
-    dwc2_cfg.vbus_sensing = (USB_ETH_VBUS_SENSING != 0U);
-    (void)tud_configure(USB_ETH_RHPORT, TUD_CFGID_DWC2, &dwc2_cfg);
-#endif
-    tusb_rhport_init_t dev_init =
-    {
-        .role  = TUSB_ROLE_DEVICE,
-        .speed = TUSB_SPEED_AUTO
-    };
-    if (!tusb_init(USB_ETH_RHPORT, &dev_init))
+    usb_eth_make_mac();   /* до подключения USB: MAC отдаётся ПК в дескрипторах */
+    usb_dev_set_eth_hooks(&s_eth_hooks);
+    if (usb_dev_set_func(USB_DEV_FUNC_ETH, true) != HAL_OK)
     {
         USB_ETH_LOG(USB_ETH_LOG_CODE_INIT_FAIL, 0U, 1);
         return HAL_ERROR;
     }
 
-    /* --- lwIP --- */
-    lwip_init();
+    /* --- lwIP: инициализация стека - один раз, netif - при каждом Init --- */
+    if (!s_lwip_started)
+    {
+        s_rand_state = usb_eth_uid_hash(HAL_GetTick()) | 1U;
+        lwip_init();
+        s_lwip_started = true;
+    }
 
     ip4_addr_t ip;
     ip4_addr_t mask;
@@ -454,6 +513,7 @@ HAL_StatusTypeDef USB_ETH_Init(void)
     if (netif_add(&s_netif, &ip, &mask, &gw, NULL, usb_eth_netif_init, ethernet_input) == NULL)
     {
         USB_ETH_LOG(USB_ETH_LOG_CODE_INIT_FAIL, 0U, 2);
+        (void)usb_dev_set_func(USB_DEV_FUNC_ETH, false);
         return HAL_ERROR;
     }
     netif_set_default(&s_netif);
@@ -463,43 +523,44 @@ HAL_StatusTypeDef USB_ETH_Init(void)
     uint32_t net = USB_ETH_HOST_IP & 0xFFFFFF00UL;
     for (uint32_t i = 0U; i < (uint32_t)s_dhcp_config.num_entry; i++)
     {
+        memset(s_dhcp_entries[i].mac, 0, sizeof(s_dhcp_entries[i].mac));
         ip4_addr_set_u32(&s_dhcp_entries[i].addr, lwip_htonl(net | (2U + i)));
     }
-    if (dhserv_init(&s_dhcp_config) != ERR_OK)
-    {
-        USB_ETH_LOG(USB_ETH_LOG_CODE_INIT_FAIL, 0U, 3);
-        return HAL_ERROR;
-    }
+    err_t dhcp_err = dhserv_init(&s_dhcp_config);
 #else
     /* Пока link down, DHCP ждёт и стартует сам при netif_set_link_up() */
-    if (dhcp_start(&s_netif) != ERR_OK)
+    err_t dhcp_err = dhcp_start(&s_netif);
+#endif
+    if (dhcp_err != ERR_OK)
     {
         USB_ETH_LOG(USB_ETH_LOG_CODE_INIT_FAIL, 0U, 3);
+        netif_remove(&s_netif);
+        (void)usb_dev_set_func(USB_DEV_FUNC_ETH, false);
         return HAL_ERROR;
     }
-#endif
 
-    tud_network_link_state(USB_ETH_RHPORT, true);
     s_initialized = true;
     USB_ETH_LOG(USB_ETH_LOG_CODE_INIT_OK, 0U, USB_ETH_MODE);
     return HAL_OK;
 }
 
-void USB_ETH_Process(void)
+HAL_StatusTypeDef USB_ETH_DeInit(void)
 {
-    if (!s_initialized || usb_eth_in_isr())
+    if (usb_eth_in_isr())
     {
-        return;
+        return HAL_ERROR;
     }
-    tud_task();
-    usb_eth_rx_drain();
-    sys_check_timeouts();
-    usb_eth_update_state();
-}
-
-void USB_ETH_IRQHandler(void)
-{
-    tusb_int_handler(USB_ETH_RHPORT, true);
+    if (!s_initialized || s_deiniting)
+    {
+        return HAL_OK;
+    }
+    if (s_in_process)
+    {
+        s_deinit_pending = true;   /* внутри колбэка lwIP удалять pcb и netif нельзя */
+        return HAL_OK;
+    }
+    usb_eth_do_deinit();
+    return HAL_OK;
 }
 
 void USB_ETH_SetNetCallback(USB_ETH_NetCallback_t cb)

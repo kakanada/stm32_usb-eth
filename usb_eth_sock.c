@@ -4,8 +4,8 @@
  * @brief   TCP-серверы и UDP-сокеты usb_eth поверх lwIP raw API: статические
  *          пулы, колбэки подключения/приёма/отправки/закрытия.
  * @author  Mechanic
- * @date    27.09.2026
- * @version 1.0
+ * @date    03.10.2026
+ * @version 2.0
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -443,6 +443,31 @@ void usb_eth_sock_link_lost(void)
             tcp_abort(pcb);   /* вызывается не из колбэка lwIP - ERR_ABRT не нужен */
             usb_eth_conn_release(conn, USB_ETH_CLOSE_LINK_LOST);
         }
+    }
+}
+
+void usb_eth_sock_deinit(void)
+{
+    usb_eth_sock_link_lost();
+
+    for (uint32_t i = 0U; i < USB_ETH_MAX_TCP_SERVERS; i++)
+    {
+        if ((s_servers[i].used != 0U) && (s_servers[i].pcb != NULL))
+        {
+            struct tcp_pcb *lpcb = (struct tcp_pcb *)s_servers[i].pcb;
+            tcp_arg(lpcb, NULL);
+            tcp_accept(lpcb, NULL);
+            (void)tcp_close(lpcb);   /* слушающий pcb закрывается всегда успешно */
+        }
+        memset(&s_servers[i], 0, sizeof(s_servers[i]));
+    }
+    for (uint32_t i = 0U; i < USB_ETH_MAX_UDP_SOCKETS; i++)
+    {
+        if ((s_udp[i].used != 0U) && (s_udp[i].pcb != NULL))
+        {
+            udp_remove((struct udp_pcb *)s_udp[i].pcb);
+        }
+        memset(&s_udp[i], 0, sizeof(s_udp[i]));
     }
 }
 

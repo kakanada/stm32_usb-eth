@@ -1,11 +1,12 @@
 /**
  ******************************************************************************
- * @file    usb_eth_opts.h
- * @brief   Compile-time параметры usb_eth и их значения по умолчанию. Общий
- *          для usb_eth, lwipopts.h и tusb_config.h - единый источник истины.
+ * @file    usb_dev_opts.h
+ * @brief   Compile-time параметры библиотеки (USB, сеть, COM) и их значения по
+ *          умолчанию. Общий для usb_dev, usb_eth, usb_com, lwipopts.h и
+ *          tusb_config.h - единый источник истины.
  * @author  Mechanic
  * @date    03.10.2026
- * @version 1.1
+ * @version 2.0
  *
  * @copyright Copyright (c) 2026 Mechanic.
  *            Свободное некоммерческое использование и модификация. Условия
@@ -13,13 +14,33 @@
  ******************************************************************************
  */
 
-#ifndef USB_ETH_OPTS_H
-#define USB_ETH_OPTS_H
+#ifndef USB_DEV_OPTS_H
+#define USB_DEV_OPTS_H
 
-/* Все define ниже переопределяются ТОЛЬКО глобальными символами
+/* ========================================================================= */
+/*  Логирование через stm32_logger: 1 - включено, 0 - выключено.             */
+/*  Единственный переключатель для всей библиотеки (USB, сеть, COM). При 0   */
+/*  logger.h не подключается вовсе. При 1 нужны logger.h в include path,     */
+/*  LOGGER_Init() до USB_ETH_Init()/USB_COM_Init() и в logger_codes.h        */
+/*  проекта - LOGGER_ENABLE_USB_ETH (коды 0x42xx) и LOGGER_ENABLE_USB_DEV    */
+/*  (коды 0x43xx). Можно поменять здесь или задать -DUSB_DEV_LOG_ENABLE=1.   */
+/* ========================================================================= */
+#ifndef USB_DEV_LOG_ENABLE
+#define USB_DEV_LOG_ENABLE 0
+#endif
+
+#if defined(USB_ETH_LOG_ENABLE)
+#error "usb_eth 2.0: USB_ETH_LOG_ENABLE переименован в USB_DEV_LOG_ENABLE"
+#endif
+
+/* Остальные define ниже переопределяются ТОЛЬКО глобальными символами
  * препроцессора проекта (-D...), а не #define перед #include: этот файл
  * включают также исходники lwIP и TinyUSB, и они обязаны видеть те же
- * значения, что и сама библиотека. Править этот файл не нужно. */
+ * значения, что и сама библиотека. Править их здесь не нужно. */
+
+/* ------------------------------------------------------------------------- */
+/*  Сеть (USB_ETH_xxx)                                                       */
+/* ------------------------------------------------------------------------- */
 
 /* ------------------------------------------------------------------------- */
 /*  Режим работы сети                                                        */
@@ -81,36 +102,76 @@
 #endif
 
 /* ------------------------------------------------------------------------- */
-/*  USB                                                                      */
+/*  USB (общее для сети и COM)                                               */
 /* ------------------------------------------------------------------------- */
+
+/* Защита от старых имён (до версии 2.0): молча проигнорированный define опаснее ошибки. */
+#if defined(USB_ETH_RHPORT) || defined(USB_ETH_VBUS_SENSING) || defined(USB_ETH_USB_VID) || \
+    defined(USB_ETH_USB_PID) || defined(USB_ETH_STR_MANUFACTURER) || defined(USB_ETH_STR_PRODUCT)
+#error "usb_eth 2.0: USB_ETH_RHPORT/VBUS_SENSING/USB_VID/USB_PID/STR_* переименованы в USB_DEV_*"
+#endif
 
 /** Номер USB-порта TinyUSB: 0 - OTG_FS, 1 - OTG_HS (во встроенном FS PHY). На STM32H7
  *  с единственным USB (H72x/H73x/H7Ax/H7Bx) TinyUSB отображает OTG_HS на порт 0 -
  *  оставить 0, прерывание - OTG_HS_IRQHandler(). */
-#ifndef USB_ETH_RHPORT
-#define USB_ETH_RHPORT 0U
+#ifndef USB_DEV_RHPORT
+#define USB_DEV_RHPORT 0U
 #endif
 
 /** 1 - использовать VBUS sensing (пин VBUS разведён на плате), 0 - нет. */
-#ifndef USB_ETH_VBUS_SENSING
-#define USB_ETH_VBUS_SENSING 0U
+#ifndef USB_DEV_VBUS_SENSING
+#define USB_DEV_VBUS_SENSING 0U
 #endif
 
-/** USB VID/PID. 0xCAFE - тестовый VID TinyUSB, для серийного изделия заменить. */
-#ifndef USB_ETH_USB_VID
-#define USB_ETH_USB_VID 0xCAFEU
+/** USB VID. 0xCAFE - тестовый VID TinyUSB, для серийного изделия заменить. */
+#ifndef USB_DEV_VID
+#define USB_DEV_VID 0xCAFEU
 #endif
 
-#ifndef USB_ETH_USB_PID
-#define USB_ETH_USB_PID 0x4011U
+/* PID - свой для каждого набора устройств: Windows запоминает описание устройства
+ * по VID/PID, и при одном PID на разные наборы драйверы встали бы неверно. */
+
+/** PID, когда включена только сеть (USB_ETH_Init). */
+#ifndef USB_DEV_PID_ETH
+#define USB_DEV_PID_ETH 0x4011U
 #endif
 
-#ifndef USB_ETH_STR_MANUFACTURER
-#define USB_ETH_STR_MANUFACTURER "Mechanic"
+/** PID, когда включён только COM (USB_COM_Init). */
+#ifndef USB_DEV_PID_COM
+#define USB_DEV_PID_COM 0x4012U
 #endif
 
-#ifndef USB_ETH_STR_PRODUCT
-#define USB_ETH_STR_PRODUCT "STM32 USB Ethernet"
+/** PID, когда включены сеть и COM одновременно. */
+#ifndef USB_DEV_PID_ETH_COM
+#define USB_DEV_PID_ETH_COM 0x4013U
+#endif
+
+#ifndef USB_DEV_STR_MANUFACTURER
+#define USB_DEV_STR_MANUFACTURER "Mechanic"
+#endif
+
+#ifndef USB_DEV_STR_PRODUCT
+#define USB_DEV_STR_PRODUCT "STM32 USB Device"
+#endif
+
+/** Сколько плата остаётся отключённой от ПК при смене набора устройств (Init/DeInit
+ *  второго устройства, когда первое уже работает), мс. */
+#ifndef USB_DEV_REENUM_MS
+#define USB_DEV_REENUM_MS 300U
+#endif
+
+/* ------------------------------------------------------------------------- */
+/*  Виртуальный COM-порт (CDC-ACM)                                           */
+/* ------------------------------------------------------------------------- */
+
+/** Буфер приёма COM, байт. Пока он полон, ПК ждёт - данные не теряются. */
+#ifndef USB_COM_RX_BUF_SIZE
+#define USB_COM_RX_BUF_SIZE 512
+#endif
+
+/** Буфер передачи COM, байт: USB_COM_Transmit() принимает данные, пока в нём есть место. */
+#ifndef USB_COM_TX_BUF_SIZE
+#define USB_COM_TX_BUF_SIZE 1024
 #endif
 
 /* USB_ETH_MAC_ADDR - по умолчанию НЕ определён: MAC вычисляется из
@@ -119,15 +180,46 @@
  * локально администрируемый адрес, младший бит последнего байта - 0). */
 
 /* ------------------------------------------------------------------------- */
-/*  Логирование через stm32_logger (опционально)                             */
+/*  Коды событий для stm32_logger (при USB_DEV_LOG_ENABLE = 1)               */
 /* ------------------------------------------------------------------------- */
 
-/** 1 - писать события в stm32_logger (нужен logger.h в include path), 0 - нет. */
-#ifndef USB_ETH_LOG_ENABLE
-#define USB_ETH_LOG_ENABLE 0
+/* Общая часть и COM: адресное пространство 0x43 (LOGGER_ENABLE_USB_DEV,
+ * LOG_CODE_USB_DEV_*). Значения совпадают с таблицей логгера. */
+#ifndef USB_DEV_LOG_CODE_USB_START_FAIL
+#define USB_DEV_LOG_CODE_USB_START_FAIL   0x4300U /**< HIGH: TinyUSB не запустился */
+#endif
+#ifndef USB_DEV_LOG_CODE_INIT_REFUSED
+#define USB_DEV_LOG_CODE_INIT_REFUSED     0x4301U /**< HIGH: Init отклонён - нет точек на сеть+COM, src = устройство (1 сеть, 2 COM) */
+#endif
+#ifndef USB_DEV_LOG_CODE_USB_CONNECTED
+#define USB_DEV_LOG_CODE_USB_CONNECTED    0x4302U /**< LOW: подключено к ПК, value = набор (бит0 сеть, бит1 COM) */
+#endif
+#ifndef USB_DEV_LOG_CODE_USB_DISCONNECTED
+#define USB_DEV_LOG_CODE_USB_DISCONNECTED 0x4303U /**< MEDIUM: отключено от ПК (кабель/сон ПК), value = набор */
+#endif
+#ifndef USB_DEV_LOG_CODE_REENUM
+#define USB_DEV_LOG_CODE_REENUM           0x4304U /**< LOW: переподключение к ПК, value = новый набор */
+#endif
+#ifndef USB_DEV_LOG_CODE_COM_INIT
+#define USB_DEV_LOG_CODE_COM_INIT         0x4305U /**< LOW: COM-порт включён */
+#endif
+#ifndef USB_DEV_LOG_CODE_COM_DEINIT
+#define USB_DEV_LOG_CODE_COM_DEINIT       0x4306U /**< LOW: COM-порт выключен */
+#endif
+#ifndef USB_DEV_LOG_CODE_COM_OPEN
+#define USB_DEV_LOG_CODE_COM_OPEN         0x4307U /**< LOW: порт открыт на ПК (DTR), value = скорость */
+#endif
+#ifndef USB_DEV_LOG_CODE_COM_CLOSE
+#define USB_DEV_LOG_CODE_COM_CLOSE        0x4308U /**< LOW: порт закрыт на ПК */
+#endif
+#ifndef USB_DEV_LOG_CODE_COM_TX_BUSY
+#define USB_DEV_LOG_CODE_COM_TX_BUSY      0x4309U /**< MEDIUM: передача отклонена, value = длина (раз на серию) */
+#endif
+#ifndef USB_DEV_LOG_CODE_ETH_DEINIT
+#define USB_DEV_LOG_CODE_ETH_DEINIT       0x430AU /**< LOW: сеть выключена (USB_ETH_DeInit) */
 #endif
 
-/* Коды событий: адресное пространство 0x42 закреплено за usb_eth в
+/* Сеть: адресное пространство 0x42 закреплено за usb_eth в
  * stm32_logger (LOGGER_ENABLE_USB_ETH, LOG_CODE_USB_ETH_*). Значения
  * совпадают с таблицей логгера; переопределять не требуется. */
 #ifndef USB_ETH_LOG_CODE_INIT_OK
@@ -179,4 +271,4 @@
 #define USB_ETH_LOG_CODE_UDP_BIND_FAIL 0x420FU /**< HIGH: src = порт, value = код lwIP */
 #endif
 
-#endif /* USB_ETH_OPTS_H */
+#endif /* USB_DEV_OPTS_H */
