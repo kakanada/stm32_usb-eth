@@ -76,8 +76,8 @@ extern "C" {
 #define CFG_TUD_CDC_RX_BUFSIZE       USB_COM_RX_BUF_SIZE
 #define CFG_TUD_CDC_TX_BUFSIZE       USB_COM_TX_BUF_SIZE
 #define CFG_TUD_CDC_EP_BUFSIZE       64
-/* Порт на ПК не открыт - в буфере остаются последние данные, а не первые */
-#define CFG_TUD_CDC_TX_OVERWRITABLE_IF_NOT_CONNECTED 1
+/* Порт на ПК не открыт - usb_com данные не пишет вовсе (см. USB_COM_Transmit) */
+#define CFG_TUD_CDC_TX_OVERWRITABLE_IF_NOT_CONNECTED 0
 
 /* --- Остальные классы не используются --- */
 #define CFG_TUD_MSC          0

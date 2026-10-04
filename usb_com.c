@@ -99,13 +99,14 @@ HAL_StatusTypeDef USB_COM_Transmit(const uint8_t *data, uint16_t len)
     {
         return HAL_ERROR;
     }
-    if (len == 0U)
+    if ((len == 0U) || !tud_cdc_connected())
     {
+        /* Порт на ПК не открыт - данные никому не нужны. Не копим их: иначе после
+         * открытия ПК получил бы обрывки старых записей (буфер затирается не по
+         * границам вызовов). */
         return HAL_OK;
     }
-    /* Порт открыт - всё или ничего. Не открыт - TinyUSB хранит последние
-     * USB_COM_TX_BUF_SIZE байт, затирая старые (CFG_TUD_CDC_TX_OVERWRITABLE_IF_NOT_CONNECTED). */
-    if (tud_cdc_connected() && (tud_cdc_write_available() < len))
+    if (tud_cdc_write_available() < len)
     {
         if (!s_tx_busy_logged)
         {
@@ -142,7 +143,7 @@ uint16_t USB_COM_GetFreeSpace(void)
     }
     if (!tud_cdc_connected())
     {
-        return (uint16_t)USB_COM_TX_BUF_SIZE;   /* старое затирается - помещается всё */
+        return (uint16_t)USB_COM_TX_BUF_SIZE;   /* порт закрыт - Transmit примет и отбросит всё */
     }
     return (uint16_t)tud_cdc_write_available();
 }
@@ -184,6 +185,25 @@ uint32_t USB_COM_GetBaudRate(void)
     cdc_line_coding_t coding;
     tud_cdc_get_line_coding(&coding);
     return coding.bit_rate;
+}
+
+/* ------------------------------------------------------------------------- */
+/*  Колбэки TinyUSB                                                          */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * @brief Колбэк TinyUSB: ПК открыл/закрыл порт (DTR) - вызывается из tud_task().
+ *        Буфер передачи очищается, чтобы ПК после открытия получил только
+ *        новые данные, начиная с целого вызова USB_COM_Transmit().
+ * @param itf номер CDC-интерфейса (всегда 0)
+ * @param dtr сигнал DTR
+ * @param rts сигнал RTS (не используется)
+ */
+void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
+{
+    (void)dtr;
+    (void)rts;
+    (void)tud_cdc_n_write_clear(itf);
 }
 
 /* ------------------------------------------------------------------------- */
