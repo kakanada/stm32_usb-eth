@@ -20,7 +20,8 @@
 #include "usb_dev_internal.h"
 
 /* События сети - через общий переключатель USB_DEV_LOG_ENABLE (usb_dev_opts.h). */
-#define USB_ETH_LOG(code, source_id, value) USB_DEV_LOG((code), (source_id), (value))
+#define USB_ETH_LOG(code, source_id, value)     USB_DEV_LOG((code), (source_id), (value))
+#define USB_ETH_LOG_ERR(code, source_id, value) USB_DEV_LOG_ERR((code), (source_id), (value))
 
 /**
  * @brief  Выполняется ли код сейчас в обработчике прерывания.

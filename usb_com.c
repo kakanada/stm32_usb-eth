@@ -20,6 +20,7 @@
 #include "usb_dev_internal.h"
 
 #include "tusb.h"
+#include "device/usbd_pvt.h"   /* usbd_edpt_busy() */
 
 /* ------------------------------------------------------------------------- */
 /*  Внутренние константы                                                     */
@@ -35,11 +36,32 @@
 static bool s_initialized;
 static USB_COM_RxCallback_t s_rx_cb;
 static bool s_was_open;        /* последнее записанное в лог состояние "порт открыт" */
-static bool s_tx_busy_logged;  /* отказ передачи уже записан - до первой удачной */
+static bool s_tx_drop_pending; /* буфер передачи надо очистить, когда USB-передача завершится */
 
 /* ------------------------------------------------------------------------- */
 /*  Внутренние функции                                                       */
 /* ------------------------------------------------------------------------- */
+
+/**
+ * @brief Очищает буфер передачи, если это запрошено и безопасно. Пока идёт
+ *        USB-передача, драйвер USB читает данные прямо из этого буфера в
+ *        прерывании: очистка в этот момент оставляет передачу без данных, и
+ *        прерывание USB повторяется без конца - программа зависает. Поэтому
+ *        очистка откладывается до конца передачи. Только вне прерывания.
+ */
+static void usb_com_tx_drop_try(void)
+{
+    if (s_tx_drop_pending && !usbd_edpt_busy(USB_DEV_RHPORT, usb_dev_desc_com_ep_in()))
+    {
+        uint32_t lost = (uint32_t)USB_COM_TX_BUF_SIZE - tud_cdc_write_available();
+        (void)tud_cdc_write_clear();
+        s_tx_drop_pending = false;   /* до записи в лог: вывод лога может идти в этот же COM */
+        if (lost != 0U)
+        {
+            USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_COM_TX_DISCARD, 0U, lost);
+        }
+    }
+}
 
 /**
  * @brief  Можно ли обмениваться данными: COM включён и подключён к ПК.
@@ -58,6 +80,7 @@ HAL_StatusTypeDef USB_COM_Init(void)
 {
     if (usb_dev_in_isr())
     {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_INIT, USB_DEV_API_ERR_ISR);
         return HAL_ERROR;
     }
     if (s_initialized)
@@ -77,6 +100,7 @@ HAL_StatusTypeDef USB_COM_DeInit(void)
 {
     if (usb_dev_in_isr())
     {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_DEINIT, USB_DEV_API_ERR_ISR);
         return HAL_ERROR;
     }
     if (s_initialized)
@@ -95,8 +119,24 @@ void USB_COM_SetRxCallback(USB_COM_RxCallback_t cb)
 
 HAL_StatusTypeDef USB_COM_Transmit(const uint8_t *data, uint16_t len)
 {
-    if (usb_dev_in_isr() || ((data == NULL) && (len > 0U)) || !usb_com_ready())
+    if (usb_dev_in_isr())
     {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_TRANSMIT, USB_DEV_API_ERR_ISR);
+        return HAL_ERROR;
+    }
+    if ((data == NULL) && (len > 0U))
+    {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_TRANSMIT, USB_DEV_API_ERR_PARAM);
+        return HAL_ERROR;
+    }
+    if (!s_initialized)
+    {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_TRANSMIT, USB_DEV_API_ERR_NOT_INIT);
+        return HAL_ERROR;
+    }
+    if (!usb_com_ready())
+    {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_COM_TX_NOT_READY, 0U, len);
         return HAL_ERROR;
     }
     if ((len == 0U) || !tud_cdc_connected())
@@ -106,16 +146,14 @@ HAL_StatusTypeDef USB_COM_Transmit(const uint8_t *data, uint16_t len)
          * границам вызовов). */
         return HAL_OK;
     }
-    if (tud_cdc_write_available() < len)
+    usb_com_tx_drop_try();
+    /* Пока не очищен буфер со старыми данными, новые не принимаются: иначе
+     * очистка стёрла бы и их. */
+    if (s_tx_drop_pending || (tud_cdc_write_available() < len))
     {
-        if (!s_tx_busy_logged)
-        {
-            s_tx_busy_logged = true;
-            USB_DEV_LOG(USB_DEV_LOG_CODE_COM_TX_BUSY, 0U, len);
-        }
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_COM_TX_BUSY, 0U, len);
         return HAL_BUSY;
     }
-    s_tx_busy_logged = false;
     (void)tud_cdc_write(data, len);
     (void)tud_cdc_write_flush();
     return HAL_OK;
@@ -125,11 +163,13 @@ HAL_StatusTypeDef USB_COM_TransmitString(const char *str)
 {
     if (str == NULL)
     {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_TRANSMIT, USB_DEV_API_ERR_PARAM);
         return HAL_ERROR;
     }
     size_t len = strlen(str);
     if (len > 0xFFFFU)
     {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_TRANSMIT, USB_DEV_API_ERR_PARAM);
         return HAL_ERROR;
     }
     return USB_COM_Transmit((const uint8_t *)str, (uint16_t)len);
@@ -137,7 +177,12 @@ HAL_StatusTypeDef USB_COM_TransmitString(const char *str)
 
 uint16_t USB_COM_GetFreeSpace(void)
 {
-    if (usb_dev_in_isr() || !usb_com_ready())
+    if (usb_dev_in_isr())
+    {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_READ, USB_DEV_API_ERR_ISR);
+        return 0U;
+    }
+    if (!usb_com_ready())
     {
         return 0U;
     }
@@ -145,12 +190,22 @@ uint16_t USB_COM_GetFreeSpace(void)
     {
         return (uint16_t)USB_COM_TX_BUF_SIZE;   /* порт закрыт - Transmit примет и отбросит всё */
     }
+    usb_com_tx_drop_try();
+    if (s_tx_drop_pending)
+    {
+        return 0U;
+    }
     return (uint16_t)tud_cdc_write_available();
 }
 
 uint16_t USB_COM_Available(void)
 {
-    if (usb_dev_in_isr() || !usb_com_ready())
+    if (usb_dev_in_isr())
+    {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_READ, USB_DEV_API_ERR_ISR);
+        return 0U;
+    }
+    if (!usb_com_ready())
     {
         return 0U;
     }
@@ -159,7 +214,17 @@ uint16_t USB_COM_Available(void)
 
 uint16_t USB_COM_Read(uint8_t *buf, uint16_t max_len)
 {
-    if (usb_dev_in_isr() || (buf == NULL) || (max_len == 0U) || !usb_com_ready())
+    if (usb_dev_in_isr())
+    {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_READ, USB_DEV_API_ERR_ISR);
+        return 0U;
+    }
+    if ((buf == NULL) || (max_len == 0U))
+    {
+        USB_DEV_LOG_ERR(USB_DEV_LOG_CODE_API_ERROR, USB_DEV_API_COM_READ, USB_DEV_API_ERR_PARAM);
+        return 0U;
+    }
+    if (!usb_com_ready())
     {
         return 0U;
     }
@@ -194,16 +259,30 @@ uint32_t USB_COM_GetBaudRate(void)
 /**
  * @brief Колбэк TinyUSB: ПК открыл/закрыл порт (DTR) - вызывается из tud_task().
  *        Буфер передачи очищается, чтобы ПК после открытия получил только
- *        новые данные, начиная с целого вызова USB_COM_Transmit().
+ *        новые данные, начиная с целого вызова USB_COM_Transmit(). Если идёт
+ *        USB-передача - очистка после её конца (см. usb_com_tx_drop_try()).
  * @param itf номер CDC-интерфейса (всегда 0)
  * @param dtr сигнал DTR
  * @param rts сигнал RTS (не используется)
  */
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
 {
+    (void)itf;
     (void)dtr;
     (void)rts;
-    (void)tud_cdc_n_write_clear(itf);
+    s_tx_drop_pending = true;
+    usb_com_tx_drop_try();
+}
+
+/**
+ * @brief Колбэк TinyUSB: USB-передача завершена (из tud_task(), до запуска
+ *        следующей) - момент выполнить отложенную очистку буфера.
+ * @param itf номер CDC-интерфейса (всегда 0)
+ */
+void tud_cdc_tx_complete_cb(uint8_t itf)
+{
+    (void)itf;
+    usb_com_tx_drop_try();
 }
 
 /* ------------------------------------------------------------------------- */
@@ -216,6 +295,10 @@ void usb_com_process(void)
     /* Не больше одного буфера приёма за проход - главный цикл не застревает здесь,
      * даже если ПК шлёт без остановки. */
     uint32_t budget = (USB_COM_RX_BUF_SIZE / USB_COM_RX_CHUNK) + 1U;
+
+    /* Сброс шины (кабель вынут и вставлен) обрывает передачу без колбэка
+     * завершения - отложенная очистка выполняется здесь. */
+    usb_com_tx_drop_try();
 
     bool open = USB_COM_IsOpen();
     if (open != s_was_open)

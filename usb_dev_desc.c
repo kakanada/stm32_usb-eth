@@ -161,6 +161,11 @@ void usb_dev_desc_build(uint8_t funcs)
     }
 }
 
+uint8_t usb_dev_desc_com_ep_in(void)
+{
+    return ((s_funcs & USB_DEV_FUNC_ETH) != 0U) ? USB_DEV_EP_COM_AFTER_IN : USB_DEV_EP_COM_ALONE_IN;
+}
+
 /**
  * @brief  Колбэк TinyUSB: дескриптор конфигурации.
  * @param  index номер конфигурации (всегда 0)

@@ -218,6 +218,30 @@
 #ifndef USB_DEV_LOG_CODE_ETH_DEINIT
 #define USB_DEV_LOG_CODE_ETH_DEINIT       0x430AU /**< LOW: сеть выключена (USB_ETH_DeInit) */
 #endif
+#ifndef USB_DEV_LOG_CODE_API_ERROR
+#define USB_DEV_LOG_CODE_API_ERROR        0x430BU /**< MEDIUM: неверный вызов USB_/USB_COM_, src = функция, value = причина */
+#endif
+#ifndef USB_DEV_LOG_CODE_COM_TX_NOT_READY
+#define USB_DEV_LOG_CODE_COM_TX_NOT_READY 0x430CU /**< MEDIUM: Transmit, а COM не подключён к ПК, value = длина */
+#endif
+#ifndef USB_DEV_LOG_CODE_COM_TX_DISCARD
+#define USB_DEV_LOG_CODE_COM_TX_DISCARD   0x430DU /**< MEDIUM: порт открыт/закрыт - неотправленные данные стёрты, value = байт */
+#endif
+#ifndef USB_DEV_LOG_CODE_USB_CONNECT_FAIL
+#define USB_DEV_LOG_CODE_USB_CONNECT_FAIL 0x430EU /**< HIGH: TinyUSB не подключил/отключил плату, value = 1 подкл., 0 откл. */
+#endif
+#ifndef USB_DEV_LOG_CODE_TUSB_ASSERT
+#define USB_DEV_LOG_CODE_TUSB_ASSERT      0x430FU /**< HIGH: внутренняя ошибка TinyUSB (TU_ASSERT), value = адрес кода */
+#endif
+#ifndef USB_DEV_LOG_CODE_LOG_SUPPRESSED
+#define USB_DEV_LOG_CODE_LOG_SUPPRESSED   0x4310U /**< MEDIUM: записи подавлены (частота/повторный вход), src = код, value = сколько */
+#endif
+
+/** Ошибки одного кода пишутся в лог не чаще этого интервала (мс); пропущенные
+ *  считаются и выводятся одной записью USB_DEV_LOG_CODE_LOG_SUPPRESSED. */
+#ifndef USB_DEV_LOG_MIN_INTERVAL_MS
+#define USB_DEV_LOG_MIN_INTERVAL_MS 1000U
+#endif
 
 /* Сеть: адресное пространство 0x42 закреплено за usb_eth в
  * stm32_logger (LOGGER_ENABLE_USB_ETH, LOG_CODE_USB_ETH_*). Значения
@@ -269,6 +293,39 @@
 #endif
 #ifndef USB_ETH_LOG_CODE_UDP_BIND_FAIL
 #define USB_ETH_LOG_CODE_UDP_BIND_FAIL 0x420FU /**< HIGH: src = порт, value = код lwIP */
+#endif
+#ifndef USB_ETH_LOG_CODE_API_ERROR
+#define USB_ETH_LOG_CODE_API_ERROR     0x4210U /**< MEDIUM: неверный вызов USB_ETH_, src = функция, value = причина */
+#endif
+#ifndef USB_ETH_LOG_CODE_TX_NO_USB
+#define USB_ETH_LOG_CODE_TX_NO_USB     0x4211U /**< MEDIUM: кадр не отправлен - USB не подключён, value = длина */
+#endif
+#ifndef USB_ETH_LOG_CODE_TCP_SEND_FAIL
+#define USB_ETH_LOG_CODE_TCP_SEND_FAIL 0x4212U /**< MEDIUM: ошибка tcp_write/tcp_output, src = порт, value = код lwIP */
+#endif
+#ifndef USB_ETH_LOG_CODE_UDP_SEND_FAIL
+#define USB_ETH_LOG_CODE_UDP_SEND_FAIL 0x4213U /**< MEDIUM: ошибка udp_sendto, src = порт, value = код lwIP */
+#endif
+#ifndef USB_ETH_LOG_CODE_RX_INPUT_FAIL
+#define USB_ETH_LOG_CODE_RX_INPUT_FAIL 0x4214U /**< MEDIUM: lwIP отверг входящий кадр, value = код lwIP */
+#endif
+#ifndef USB_ETH_LOG_CODE_LWIP_MEM_ERR
+#define USB_ETH_LOG_CODE_LWIP_MEM_ERR  0x4215U /**< HIGH: нехватка памяти в lwIP, src = пул (0xFFFF - куча), value = всего отказов */
+#endif
+#ifndef USB_ETH_LOG_CODE_LWIP_ASSERT
+#define USB_ETH_LOG_CODE_LWIP_ASSERT   0x4216U /**< HIGH: внутренняя проверка lwIP (LWIP_ASSERT), value = адрес кода */
+#endif
+#ifndef USB_ETH_LOG_CODE_LWIP_ARG_ERR
+#define USB_ETH_LOG_CODE_LWIP_ARG_ERR  0x4217U /**< HIGH: неверные аргументы функции lwIP (LWIP_ERROR), value = адрес кода */
+#endif
+#ifndef USB_ETH_LOG_CODE_TCP_CLOSE_RST
+#define USB_ETH_LOG_CODE_TCP_CLOSE_RST 0x4218U /**< MEDIUM: нет памяти на закрытие (FIN) - сброшено RST, src = порт */
+#endif
+#ifndef USB_ETH_LOG_CODE_TCP_ACCEPT_ERR
+#define USB_ETH_LOG_CODE_TCP_ACCEPT_ERR 0x4219U /**< MEDIUM: lwIP сообщил ошибку при входящем подключении, src = порт, value = код lwIP */
+#endif
+#ifndef USB_ETH_LOG_CODE_UDP_RX_TRUNC
+#define USB_ETH_LOG_CODE_UDP_RX_TRUNC  0x421AU /**< MEDIUM: входящая датаграмма обрезана до USB_ETH_UDP_MAX_PAYLOAD, src = порт, value = длина */
 #endif
 
 #endif /* USB_DEV_OPTS_H */

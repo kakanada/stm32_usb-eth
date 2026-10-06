@@ -69,10 +69,10 @@
 #define LWIP_NETIF_LINK_CALLBACK        0
 #define LWIP_NETIF_STATUS_CALLBACK      0
 
-/* --- Статистика: только занятость пулов памяти (для USB_ETH_GetStats) --- */
+/* --- Статистика: занятость пулов (USB_ETH_GetStats) и отказы памяти (лог) --- */
 #define LWIP_STATS                      1
 #define MEMP_STATS                      1
-#define MEM_STATS                       0
+#define MEM_STATS                       USB_DEV_LOG_ENABLE   /* отказы кучи - в лог */
 #define LINK_STATS                      0
 #define ETHARP_STATS                    0
 #define IP_STATS                        0

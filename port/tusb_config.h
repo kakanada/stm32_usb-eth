@@ -54,6 +54,10 @@ extern "C" {
 
 #define CFG_TUSB_OS          OPT_OS_NONE
 #define CFG_TUSB_DEBUG       0
+#if USB_DEV_LOG_ENABLE
+/* Сработавшая внутренняя проверка TinyUSB (TU_ASSERT) пишется в лог (usb_dev.c) */
+#define CFG_TUSB_DEBUG_BREAKPOINT usb_dev_tusb_assert
+#endif
 #define CFG_TUSB_MEM_SECTION
 #define CFG_TUSB_MEM_ALIGN   __attribute__((aligned(4)))
 

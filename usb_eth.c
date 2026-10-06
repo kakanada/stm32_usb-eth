@@ -179,6 +179,7 @@ static err_t usb_eth_linkoutput(struct netif *netif, struct pbuf *p)
         if (!usb_dev_func_mounted(USB_DEV_FUNC_ETH) || !tud_ready())
         {
             s_stats.tx_drop_no_usb++;
+            USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TX_NO_USB, 0U, p->tot_len);
             return ERR_IF;
         }
         if (tud_network_can_xmit(p->tot_len))
@@ -191,7 +192,7 @@ static err_t usb_eth_linkoutput(struct netif *netif, struct pbuf *p)
         if ((HAL_GetTick() - start) >= USB_ETH_TX_TIMEOUT_MS)
         {
             s_stats.tx_drop_timeout++;
-            USB_ETH_LOG(USB_ETH_LOG_CODE_TX_TIMEOUT, 0U, p->tot_len);
+            USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TX_TIMEOUT, 0U, p->tot_len);
             return ERR_TIMEOUT;
         }
         /* Продвигаем USB, чтобы завершилась предыдущая передача. Входящие
@@ -249,7 +250,7 @@ static bool usb_eth_recv(const uint8_t *src, uint16_t size)
     {
         /* Нет памяти - кадр теряется (не задерживаем приём навсегда) */
         s_stats.rx_drop_no_pbuf++;
-        USB_ETH_LOG(USB_ETH_LOG_CODE_RX_DROP, 0U, size);
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_RX_DROP, 0U, size);
     }
     else
     {
@@ -310,8 +311,10 @@ static void usb_eth_rx_drain(void)
         s_rx_count--;
 
         s_stats.rx_frames++;
-        if (s_netif.input(p, &s_netif) != ERR_OK)
+        err_t err = s_netif.input(p, &s_netif);
+        if (err != ERR_OK)
         {
+            USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_RX_INPUT_FAIL, 0U, err);
             pbuf_free(p);
         }
     }
@@ -437,6 +440,47 @@ static void usb_eth_do_deinit(void)
     USB_ETH_LOG(USB_DEV_LOG_CODE_ETH_DEINIT, 0U, 0);
 }
 
+#if USB_DEV_LOG_ENABLE
+/** Отказы памяти lwIP, уже записанные в лог: по пулам и куча. */
+static uint16_t s_memp_err_seen[MEMP_MAX];
+static uint16_t s_mem_err_seen;
+
+/**
+ * @brief Пишет в лог новые отказы выделения памяти внутри lwIP (пулы и куча):
+ *        так видны и потери, которые lwIP обрабатывает молча (ARP, ICMP,
+ *        входящие сегменты...).
+ */
+static void usb_eth_mem_check(void)
+{
+    for (uint32_t i = 0U; i < (uint32_t)MEMP_MAX; i++)
+    {
+        const struct stats_mem *st = lwip_stats.memp[i];
+        if ((st != NULL) && (st->err != s_memp_err_seen[i]))
+        {
+            s_memp_err_seen[i] = st->err;
+            USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_LWIP_MEM_ERR, i, st->err);
+        }
+    }
+    if (lwip_stats.mem.err != s_mem_err_seen)
+    {
+        s_mem_err_seen = lwip_stats.mem.err;
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_LWIP_MEM_ERR, 0xFFFFU, lwip_stats.mem.err);
+    }
+}
+
+void usb_eth_lwip_assert(void)
+{
+    USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_LWIP_ASSERT, 0U, (uintptr_t)__builtin_return_address(0));
+}
+
+void usb_eth_lwip_arg_error(void)
+{
+    USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_LWIP_ARG_ERR, 0U, (uintptr_t)__builtin_return_address(0));
+}
+#else
+#define usb_eth_mem_check() ((void)0)
+#endif /* USB_DEV_LOG_ENABLE */
+
 /**
  * @brief Обслуживание сети из USB_Process(): кадры в lwIP, таймеры, состояние
  *        сети, отложенный DeInit.
@@ -452,6 +496,7 @@ static void usb_eth_process(void)
     sys_check_timeouts();
     usb_eth_update_state();
     s_in_process = false;
+    usb_eth_mem_check();
 
     if (s_deinit_pending)
     {
@@ -472,8 +517,14 @@ static const usb_dev_eth_hooks_t s_eth_hooks =
 
 HAL_StatusTypeDef USB_ETH_Init(void)
 {
-    if (usb_eth_in_isr() || s_deiniting)
+    if (usb_eth_in_isr())
     {
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_API_ERROR, USB_DEV_API_ETH_INIT, USB_DEV_API_ERR_ISR);
+        return HAL_ERROR;
+    }
+    if (s_deiniting)
+    {
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_API_ERROR, USB_DEV_API_ETH_INIT, USB_DEV_API_ERR_BUSY_DEINIT);
         return HAL_ERROR;
     }
     if (s_initialized)
@@ -548,6 +599,7 @@ HAL_StatusTypeDef USB_ETH_DeInit(void)
 {
     if (usb_eth_in_isr())
     {
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_API_ERROR, USB_DEV_API_ETH_DEINIT, USB_DEV_API_ERR_ISR);
         return HAL_ERROR;
     }
     if (!s_initialized || s_deiniting)
@@ -587,6 +639,7 @@ HAL_StatusTypeDef USB_ETH_GetStats(USB_ETH_Stats_t *stats)
 {
     if (stats == NULL)
     {
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_API_ERROR, USB_DEV_API_ETH_GET_STATS, USB_DEV_API_ERR_PARAM);
         return HAL_ERROR;
     }
     *stats = s_stats;

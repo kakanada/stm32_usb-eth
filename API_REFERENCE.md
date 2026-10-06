@@ -334,13 +334,26 @@ COM не подключён.
 | `0x4206` | `DHCP_TIMEOUT` | MEDIUM | 0 | мс ожидания (15000) |
 | `0x4207` | `TCP_ACCEPT` | LOW | порт | IP клиента |
 | `0x4208` | `TCP_CLOSED` | LOW | порт | `USB_ETH_CloseReason_t` |
-| `0x4209` | `TCP_POOL_FULL` | HIGH | порт | 0 |
-| `0x420A` | `TCP_ERROR` | MEDIUM | порт | код ошибки lwIP |
-| `0x420B` | `RX_DROP` | MEDIUM | 0 | длина кадра |
-| `0x420C` | `TX_TIMEOUT` | MEDIUM | 0 | длина кадра |
-| `0x420D` | `SEND_NO_MEM` | MEDIUM | порт | запрошено байт |
+| `0x4209` | `TCP_POOL_FULL` (1) | HIGH | порт | 0 |
+| `0x420A` | `TCP_ERROR` (1) | MEDIUM | порт | код ошибки lwIP |
+| `0x420B` | `RX_DROP` (1) | MEDIUM | 0 | длина кадра |
+| `0x420C` | `TX_TIMEOUT` (1) | MEDIUM | 0 | длина кадра |
+| `0x420D` | `SEND_NO_MEM` (1) | MEDIUM | порт | запрошено байт |
 | `0x420E` | `LISTEN_FAIL` | HIGH | порт | код ошибки lwIP |
 | `0x420F` | `UDP_BIND_FAIL` | HIGH | порт | код ошибки lwIP |
+| `0x4210` | `API_ERROR` (1) | MEDIUM | функция (2) | причина (3) |
+| `0x4211` | `TX_NO_USB` (1) | MEDIUM | 0 | длина кадра: не отправлен, USB не подключён |
+| `0x4212` | `TCP_SEND_FAIL` (1) | MEDIUM | порт | код ошибки lwIP (`tcp_write`/`tcp_output`) |
+| `0x4213` | `UDP_SEND_FAIL` (1) | MEDIUM | порт | код ошибки lwIP |
+| `0x4214` | `RX_INPUT_FAIL` (1) | MEDIUM | 0 | код ошибки lwIP: входящий кадр отвергнут |
+| `0x4215` | `LWIP_MEM_ERR` (1) | HIGH | пул lwIP (`memp_t`), `0xFFFF` - куча | всего отказов в нём |
+| `0x4216` | `LWIP_ASSERT` (1) | HIGH | 0 | адрес кода lwIP (искать в .map/.elf) |
+| `0x4217` | `LWIP_ARG_ERR` (1) | HIGH | 0 | адрес кода lwIP: неверные аргументы функции lwIP |
+| `0x4218` | `TCP_CLOSE_RST` (1) | MEDIUM | порт | 0: нет памяти на FIN - закрыто сбросом |
+| `0x4219` | `TCP_ACCEPT_ERR` (1) | MEDIUM | порт | код ошибки lwIP при входящем подключении |
+| `0x421A` | `UDP_RX_TRUNC` (1) | MEDIUM | порт | длина датаграммы (обрезана до `USB_ETH_UDP_MAX_PAYLOAD`) |
+
+Сноски (1), (2), (3) - под таблицей `0x43`.
 
 ### USB и COM - `0x43`, `LOGGER_ENABLE_USB_DEV`
 
@@ -355,5 +368,23 @@ COM не подключён.
 | `0x4306` | `COM_DEINIT` | LOW | 0 | 0 |
 | `0x4307` | `COM_OPEN` | LOW | 0 | скорость, бит/с |
 | `0x4308` | `COM_CLOSE` | LOW | 0 | 0 |
-| `0x4309` | `COM_TX_BUSY` | MEDIUM | 0 | длина (раз на серию отказов) |
+| `0x4309` | `COM_TX_BUSY` (1) | MEDIUM | 0 | длина |
 | `0x430A` | `ETH_DEINIT` | LOW | 0 | 0 |
+| `0x430B` | `API_ERROR` (1) | MEDIUM | функция (2) | причина (3) |
+| `0x430C` | `COM_TX_NOT_READY` (1) | MEDIUM | 0 | длина: `Transmit`, а COM не подключён к ПК |
+| `0x430D` | `COM_TX_DISCARD` (1) | MEDIUM | 0 | стёрто неотправленных байт (порт открыт/закрыт) |
+| `0x430E` | `USB_CONNECT_FAIL` (1) | HIGH | 0 | 1 - подключение, 0 - отключение |
+| `0x430F` | `TUSB_ASSERT` (1) | HIGH | 0 | адрес кода TinyUSB (искать в .map/.elf) |
+| `0x4310` | `LOG_SUPPRESSED` | MEDIUM | подавленный код | сколько записей пропущено |
+
+(1) Не чаще `USB_DEV_LOG_MIN_INTERVAL_MS` (1000 мс) на код; пропущенные записи считаются и
+выводятся кодом `LOG_SUPPRESSED`. Запись, сделанная изнутри другой записи этой библиотеки
+(вывод лога идёт в этот же COM/сеть), не выполняется и тоже считается в `LOG_SUPPRESSED`.
+
+(2) Функция: 1 `USB_Process`, 2 `USB_COM_Init`, 3 `USB_COM_DeInit`, 4 `USB_COM_Transmit` /
+`TransmitString`, 5 `USB_COM_Read` / `Available` / `GetFreeSpace`, 16 `USB_ETH_Init`,
+17 `USB_ETH_DeInit`, 18 `USB_ETH_GetStats`, 19 `USB_ETH_TCP_Listen`, 20 `USB_ETH_TCP_Send` /
+`SendString`, 21 `USB_ETH_TCP_Close`, 22 `USB_ETH_UDP_Bind`, 23 `USB_ETH_UDP_SendTo`.
+
+(3) Причина: 1 вызов из прерывания, 2 модуль не включён / сеть не поднята, 3 неверный параметр,
+4 соединение или сокет уже закрыт, 5 `Init` во время `DeInit`.

@@ -19,6 +19,7 @@
 #include "usb_eth_internal.h"
 
 #include "lwip/tcp.h"
+#include "lwip/priv/tcp_priv.h"   /* tcp_active_pcbs, tcp_tw_pcbs - для DeInit */
 #include "lwip/udp.h"
 #include "lwip/pbuf.h"
 
@@ -66,6 +67,57 @@ static bool usb_eth_conn_valid(const USB_ETH_TcpConn_t *conn)
 }
 
 /**
+ * @brief  Проверяет вызов функции API; при отказе пишет причину в лог.
+ * @param  func      функция (USB_DEV_API_*)
+ * @param  not_ready сеть не включена
+ * @param  bad_param неверный параметр
+ * @return true - вызов отклонён
+ */
+static bool usb_eth_api_bad(uint16_t func, bool not_ready, bool bad_param)
+{
+    int32_t reason;
+
+    if (usb_eth_in_isr())
+    {
+        reason = USB_DEV_API_ERR_ISR;
+    }
+    else if (not_ready)
+    {
+        reason = USB_DEV_API_ERR_NOT_INIT;
+    }
+    else if (bad_param)
+    {
+        reason = USB_DEV_API_ERR_PARAM;
+    }
+    else
+    {
+        return false;
+    }
+    (void)func;
+    (void)reason;
+    USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_API_ERROR, func, reason);
+    return true;
+}
+
+/**
+ * @brief  Проверяет соединение, переданное в API; при отказе пишет в лог.
+ * @param  func функция (USB_DEV_API_*)
+ * @param  conn соединение
+ * @return true - соединение NULL или уже закрыто
+ */
+static bool usb_eth_conn_bad(uint16_t func, const USB_ETH_TcpConn_t *conn)
+{
+    if (usb_eth_conn_valid(conn))
+    {
+        return false;
+    }
+    (void)func;
+    USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_API_ERROR, func,
+                    (conn == NULL) ? USB_DEV_API_ERR_PARAM : USB_DEV_API_ERR_CLOSED);
+    return true;
+}
+
+/**
  * @brief Отвязывает колбэки lwIP от pcb (после этого lwIP не вызовет нас).
  * @param pcb соединение lwIP
  */
@@ -104,6 +156,7 @@ static void usb_eth_tcp_shutdown(struct tcp_pcb *pcb)
 {
     if (tcp_close(pcb) != ERR_OK)
     {
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TCP_CLOSE_RST, pcb->local_port, 0);
         s_aborted_pcb = pcb;
         tcp_abort(pcb);
     }
@@ -228,7 +281,7 @@ static void usb_eth_tcp_err_cb(void *arg, err_t err)
             reason = USB_ETH_CLOSE_ERROR;
             break;
     }
-    USB_ETH_LOG(USB_ETH_LOG_CODE_TCP_ERROR, conn->server->port, err);
+    USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TCP_ERROR, conn->server->port, err);
     usb_eth_conn_release(conn, reason);
 }
 
@@ -247,6 +300,8 @@ static err_t usb_eth_tcp_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
     s_aborted_pcb = NULL;
     if ((err != ERR_OK) || (newpcb == NULL) || (server == NULL))
     {
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TCP_ACCEPT_ERR, (server != NULL) ? server->port : 0U,
+                        (err != ERR_OK) ? err : ERR_VAL);
         return ERR_VAL;
     }
     for (uint32_t i = 0U; i < USB_ETH_MAX_TCP_CONNECTIONS; i++)
@@ -259,7 +314,7 @@ static err_t usb_eth_tcp_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
     }
     if (conn == NULL)
     {
-        USB_ETH_LOG(USB_ETH_LOG_CODE_TCP_POOL_FULL, server->port, 0);
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TCP_POOL_FULL, server->port, 0);
         tcp_abort(newpcb);
         return ERR_ABRT;
     }
@@ -300,7 +355,8 @@ USB_ETH_TcpServer_t *USB_ETH_TCP_Listen(uint16_t port, const USB_ETH_TcpHandlers
 {
     USB_ETH_TcpServer_t *server = NULL;
 
-    if (usb_eth_in_isr() || !usb_eth_is_ready() || (port == 0U) || (handlers == NULL))
+    if (usb_eth_api_bad(USB_DEV_API_TCP_LISTEN, !usb_eth_is_ready(),
+                        (port == 0U) || (handlers == NULL)))
     {
         return NULL;
     }
@@ -355,7 +411,8 @@ USB_ETH_TcpServer_t *USB_ETH_TCP_Listen(uint16_t port, const USB_ETH_TcpHandlers
 
 HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, uint16_t len)
 {
-    if (usb_eth_in_isr() || !usb_eth_conn_valid(conn) || ((data == NULL) && (len > 0U)))
+    if (usb_eth_api_bad(USB_DEV_API_TCP_SEND, false, (data == NULL) && (len > 0U)) ||
+        usb_eth_conn_bad(USB_DEV_API_TCP_SEND, conn))
     {
         return HAL_ERROR;
     }
@@ -373,28 +430,30 @@ HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, ui
     err_t err = tcp_write(pcb, data, len, TCP_WRITE_FLAG_COPY);
     if (err == ERR_MEM)
     {
-        USB_ETH_LOG(USB_ETH_LOG_CODE_SEND_NO_MEM, conn->server->port, len);
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_SEND_NO_MEM, conn->server->port, len);
         return HAL_BUSY;
     }
     if (err != ERR_OK)
     {
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TCP_SEND_FAIL, conn->server->port, err);
         return HAL_ERROR;
     }
-    (void)tcp_output(pcb);
+    err = tcp_output(pcb);
+    if (err != ERR_OK)
+    {
+        /* Данные уже в очереди lwIP - уйдут при следующей попытке; только лог */
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TCP_SEND_FAIL, conn->server->port, err);
+    }
     return HAL_OK;
 }
 
 HAL_StatusTypeDef USB_ETH_TCP_SendString(USB_ETH_TcpConn_t *conn, const char *str)
 {
-    if (str == NULL)
+    if (usb_eth_api_bad(USB_DEV_API_TCP_SEND, false, (str == NULL) || (strlen(str) > 0xFFFFU)))
     {
         return HAL_ERROR;
     }
     size_t len = strlen(str);
-    if (len > 0xFFFFU)
-    {
-        return HAL_ERROR;
-    }
     return USB_ETH_TCP_Send(conn, str, (uint16_t)len);
 }
 
@@ -420,7 +479,8 @@ bool USB_ETH_TCP_IsOpen(const USB_ETH_TcpConn_t *conn)
 
 HAL_StatusTypeDef USB_ETH_TCP_Close(USB_ETH_TcpConn_t *conn)
 {
-    if (usb_eth_in_isr() || !usb_eth_conn_valid(conn))
+    if (usb_eth_api_bad(USB_DEV_API_TCP_CLOSE, false, false) ||
+        usb_eth_conn_bad(USB_DEV_API_TCP_CLOSE, conn))
     {
         return HAL_ERROR;
     }
@@ -469,6 +529,19 @@ void usb_eth_sock_deinit(void)
         }
         memset(&s_udp[i], 0, sizeof(s_udp[i]));
     }
+
+    /* Соединения, уже закрытые пользователем, ещё живут в lwIP (дозакрытие,
+     * TIME_WAIT до 2 мин) и держат свой порт: Listen на тот же порт после
+     * повторного Init получил бы ERR_USE. Они отвязаны от библиотеки
+     * (колбэков нет) - уничтожаются все. */
+    while (tcp_active_pcbs != NULL)
+    {
+        tcp_abort(tcp_active_pcbs);
+    }
+    while (tcp_tw_pcbs != NULL)
+    {
+        tcp_abort(tcp_tw_pcbs);
+    }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -496,6 +569,10 @@ static void usb_eth_udp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p,
         if (p->next != NULL)
         {
             /* Датаграмма в нескольких pbuf - склеиваем в один буфер */
+            if (p->tot_len > sizeof(s_udp_rx_buf))
+            {
+                USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_UDP_RX_TRUNC, sock->port, p->tot_len);
+            }
             len = pbuf_copy_partial(p, s_udp_rx_buf, sizeof(s_udp_rx_buf), 0U);
             data = s_udp_rx_buf;
         }
@@ -509,7 +586,7 @@ USB_ETH_UdpSocket_t *USB_ETH_UDP_Bind(uint16_t port, USB_ETH_UdpReceive_t on_rec
 {
     USB_ETH_UdpSocket_t *sock = NULL;
 
-    if (usb_eth_in_isr() || !usb_eth_is_ready() || (port == 0U))
+    if (usb_eth_api_bad(USB_DEV_API_UDP_BIND, !usb_eth_is_ready(), port == 0U))
     {
         return NULL;
     }
@@ -558,17 +635,22 @@ USB_ETH_UdpSocket_t *USB_ETH_UDP_Bind(uint16_t port, USB_ETH_UdpReceive_t on_rec
 HAL_StatusTypeDef USB_ETH_UDP_SendTo(USB_ETH_UdpSocket_t *sock, uint32_t ip, uint16_t port,
                                      const void *data, uint16_t len)
 {
-    if (usb_eth_in_isr() || (sock == NULL) || (sock->used == 0U) || (sock->pcb == NULL) ||
-        (data == NULL) || (len == 0U) || (len > USB_ETH_UDP_MAX_PAYLOAD) || (port == 0U) ||
-        !USB_ETH_IsNetUp())
+    if (usb_eth_api_bad(USB_DEV_API_UDP_SEND, !USB_ETH_IsNetUp(),
+                        (sock == NULL) || (data == NULL) || (len == 0U) ||
+                        (len > USB_ETH_UDP_MAX_PAYLOAD) || (port == 0U)))
     {
+        return HAL_ERROR;
+    }
+    if ((sock->used == 0U) || (sock->pcb == NULL))
+    {
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_API_ERROR, USB_DEV_API_UDP_SEND, USB_DEV_API_ERR_CLOSED);
         return HAL_ERROR;
     }
 
     struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
     if (p == NULL)
     {
-        USB_ETH_LOG(USB_ETH_LOG_CODE_SEND_NO_MEM, sock->port, len);
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_SEND_NO_MEM, sock->port, len);
         return HAL_BUSY;
     }
     (void)pbuf_take(p, data, len);
@@ -580,7 +662,13 @@ HAL_StatusTypeDef USB_ETH_UDP_SendTo(USB_ETH_UdpSocket_t *sock, uint32_t ip, uin
 
     if (err == ERR_MEM)
     {
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_SEND_NO_MEM, sock->port, len);
         return HAL_BUSY;
     }
-    return (err == ERR_OK) ? HAL_OK : HAL_ERROR;
+    if (err != ERR_OK)
+    {
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_UDP_SEND_FAIL, sock->port, err);
+        return HAL_ERROR;
+    }
+    return HAL_OK;
 }
