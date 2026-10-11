@@ -101,6 +101,36 @@
 #define USB_ETH_RX_PBUF_POOL_SIZE 16
 #endif
 
+/** Очередь исходящих кадров, ждущих свободного буфера USB (по 4 байта ОЗУ на кадр, сами
+ *  кадры не копируются). Пока в очереди есть место, отправка не ждёт USB и не грузит
+ *  процессор. Если в USB_ETH_GetStats() tx_queue_max_used дошёл до tx_queue_len -
+ *  увеличить. Не больше 255. */
+#ifndef USB_ETH_TX_QUEUE_LEN
+#define USB_ETH_TX_QUEUE_LEN 16U
+#endif
+
+#if (USB_ETH_TX_QUEUE_LEN < 1) || (USB_ETH_TX_QUEUE_LEN > 255)
+#error "USB_ETH_TX_QUEUE_LEN: допустимо 1..255"
+#endif
+
+/** Буферы USB для отправки на ПК (NTB): число и размер в байтах (ОЗУ = число x размер).
+ *  Пока один буфер передаётся по USB, в следующий складываются новые кадры - мелкие
+ *  кадры уходят по несколько в одном буфере. Число 2..4, размер 2048..16384. */
+#ifndef USB_ETH_NTB_IN_NUM
+#define USB_ETH_NTB_IN_NUM 2U
+#endif
+
+#ifndef USB_ETH_NTB_IN_SIZE
+#define USB_ETH_NTB_IN_SIZE 2048U
+#endif
+
+#if (USB_ETH_NTB_IN_NUM < 2) || (USB_ETH_NTB_IN_NUM > 4)
+#error "USB_ETH_NTB_IN_NUM: допустимо 2..4"
+#endif
+#if (USB_ETH_NTB_IN_SIZE < 2048) || (USB_ETH_NTB_IN_SIZE > 16384) || ((USB_ETH_NTB_IN_SIZE % 4) != 0)
+#error "USB_ETH_NTB_IN_SIZE: допустимо 2048..16384, кратно 4"
+#endif
+
 /* ------------------------------------------------------------------------- */
 /*  USB (общее для сети и COM)                                               */
 /* ------------------------------------------------------------------------- */

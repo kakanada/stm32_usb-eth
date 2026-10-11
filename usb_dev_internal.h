@@ -58,6 +58,7 @@ void usb_dev_log(uint16_t code, uint16_t source_id, int32_t value, bool limited)
 #define USB_DEV_API_TCP_CLOSE        21U  /**< USB_ETH_TCP_Close */
 #define USB_DEV_API_UDP_BIND         22U  /**< USB_ETH_UDP_Bind */
 #define USB_DEV_API_UDP_SEND         23U  /**< USB_ETH_UDP_SendTo */
+#define USB_DEV_API_TCP_FLUSH        24U  /**< USB_ETH_TCP_Flush */
 
 /* Значение (value) для кодов API_ERROR: причина отказа. */
 #define USB_DEV_API_ERR_ISR          1    /**< вызов из прерывания */

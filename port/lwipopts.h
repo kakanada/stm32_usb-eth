@@ -57,6 +57,9 @@
 #define TCP_WND                         (4 * TCP_MSS)
 #define TCP_SND_QUEUELEN                ((4 * TCP_SND_BUF) / TCP_MSS)
 #define LWIP_TCP_KEEPALIVE              1
+/* Контрольная сумма TCP считается при копировании данных в tcp_write - один
+ * проход по данным вместо двух */
+#define LWIP_CHECKSUM_ON_COPY           1
 
 /* --- Пулы: из размеров пулов usb_eth (+ служебные pcb) --- */
 #define MEMP_NUM_TCP_PCB                (USB_ETH_MAX_TCP_CONNECTIONS + 2)

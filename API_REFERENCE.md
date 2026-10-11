@@ -124,6 +124,8 @@ uint16_t remote_port)` - принята датаграмма; `data` дейст�
 | `tx_drop_no_usb` | кадров к ПК потеряно: USB не подключён |
 | `pbuf_pool_size` | `USB_ETH_RX_PBUF_POOL_SIZE` |
 | `pbuf_pool_max_used` | максимум одновременно занятых буферов приёма |
+| `tx_queue_len` | `USB_ETH_TX_QUEUE_LEN` |
+| `tx_queue_max_used` | максимум кадров в очереди отправки; дошёл до `tx_queue_len` - увеличить |
 
 ## Сеть: включение и состояние
 
@@ -190,7 +192,9 @@ UDP-сокеты удаляются (указатели на них недейс
 
 ### `HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, uint16_t len)`
 
-Ставит данные в очередь отправки - целиком или ничего. Данные копируются.
+Ставит данные в очередь отправки - целиком или ничего. Данные копируются. В сеть они уходят в
+ближайшем `USB_Process()` (или сразу - `USB_ETH_TCP_Flush()`): несколько `Send` подряд
+склеиваются в полные TCP-сегменты, а не уходят пакетом на каждый вызов.
 
 | Возврат | Значение |
 |---|---|
@@ -201,6 +205,13 @@ UDP-сокеты удаляются (указатели на них недейс
 ### `HAL_StatusTypeDef USB_ETH_TCP_SendString(USB_ETH_TcpConn_t *conn, const char *str)`
 
 `USB_ETH_TCP_Send()` для строки с завершающим нулём (ноль не отправляется).
+
+### `HAL_StatusTypeDef USB_ETH_TCP_Flush(USB_ETH_TcpConn_t *conn)`
+
+Отправляет в сеть данные, поставленные `USB_ETH_TCP_Send()`, не дожидаясь `USB_Process()`.
+Обычно не нужна: `USB_Process()` делает это сам, а склейка нескольких `Send` в один сегмент
+экономит процессор и сеть. Возврат: `HAL_OK`; `HAL_ERROR` - соединение закрыто, `conn = NULL`,
+вызов из прерывания.
 
 ### `uint16_t USB_ETH_TCP_GetFreeSpace(const USB_ETH_TcpConn_t *conn)`
 
@@ -384,7 +395,8 @@ COM не подключён.
 (2) Функция: 1 `USB_Process`, 2 `USB_COM_Init`, 3 `USB_COM_DeInit`, 4 `USB_COM_Transmit` /
 `TransmitString`, 5 `USB_COM_Read` / `Available` / `GetFreeSpace`, 16 `USB_ETH_Init`,
 17 `USB_ETH_DeInit`, 18 `USB_ETH_GetStats`, 19 `USB_ETH_TCP_Listen`, 20 `USB_ETH_TCP_Send` /
-`SendString`, 21 `USB_ETH_TCP_Close`, 22 `USB_ETH_UDP_Bind`, 23 `USB_ETH_UDP_SendTo`.
+`SendString`, 21 `USB_ETH_TCP_Close`, 22 `USB_ETH_UDP_Bind`, 23 `USB_ETH_UDP_SendTo`,
+24 `USB_ETH_TCP_Flush`.
 
 (3) Причина: 1 вызов из прерывания, 2 модуль не включён / сеть не поднята, 3 неверный параметр,
 4 соединение или сокет уже закрыт, 5 `Init` во время `DeInit`.

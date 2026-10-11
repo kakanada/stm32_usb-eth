@@ -78,6 +78,11 @@ static struct pbuf *s_rx_queue[USB_ETH_RX_QUEUE_LEN];
 static uint8_t s_rx_head;
 static uint8_t s_rx_count;
 
+/* Исходящие кадры, ждущие свободного буфера USB (ссылки pbuf, без копий). */
+static struct pbuf *s_tx_queue[USB_ETH_TX_QUEUE_LEN];
+static uint8_t s_tx_head;
+static uint8_t s_tx_count;
+
 static USB_ETH_Stats_t s_stats;
 
 #if (USB_ETH_MODE == USB_ETH_MODE_CLIENT)
@@ -160,33 +165,153 @@ static uint32_t usb_eth_ip_from_lwip(const ip4_addr_t *addr)
 /* ------------------------------------------------------------------------- */
 
 /**
- * @brief  Отправка кадра lwIP в USB (netif->linkoutput). Ждёт освобождения
- *         передатчика не дольше USB_ETH_TX_TIMEOUT_MS, иначе кадр теряется
- *         (TCP перешлёт его сам).
+ * @brief  Есть ли связь с ПК для отправки кадров.
+ * @return true - сеть в составе USB и ПК её сконфигурировал
+ */
+static bool usb_eth_tx_link_ok(void)
+{
+    /* Не только tud_ready(): при программном переподключении TinyUSB ещё
+     * считает себя подключённым, а кадр ушёл бы в никуда */
+    return usb_dev_func_mounted(USB_DEV_FUNC_ETH) && tud_ready();
+}
+
+/**
+ * @brief  Снимает первый кадр с очереди отправки.
+ * @return кадр (ссылка очереди переходит вызывающему)
+ */
+static struct pbuf *usb_eth_tx_pop(void)
+{
+    struct pbuf *p = s_tx_queue[s_tx_head];
+    s_tx_queue[s_tx_head] = NULL;
+    s_tx_head = (uint8_t)((s_tx_head + 1U) % USB_ETH_TX_QUEUE_LEN);
+    s_tx_count--;
+    return p;
+}
+
+/**
+ * @brief Сбрасывает очередь отправки (USB отключён или сеть выключается).
+ * @param count_drop true - считать сброшенные кадры потерянными
+ */
+static void usb_eth_tx_clear(bool count_drop)
+{
+    while (s_tx_count > 0U)
+    {
+        pbuf_free(usb_eth_tx_pop());
+        if (count_drop)
+        {
+            s_stats.tx_drop_no_usb++;
+        }
+    }
+}
+
+/**
+ * @brief Передаёт кадры из очереди отправки в свободные буферы USB (NTB),
+ *        сколько поместится. Не ждёт: остаток уйдёт при следующем вызове.
+ */
+static void usb_eth_tx_drain(void)
+{
+    if (s_tx_count == 0U)
+    {
+        return;
+    }
+    if (!usb_eth_tx_link_ok())
+    {
+        usb_eth_tx_clear(true);
+        return;
+    }
+    while ((s_tx_count > 0U) && tud_network_can_xmit(s_tx_queue[s_tx_head]->tot_len))
+    {
+        struct pbuf *p = usb_eth_tx_pop();
+        /* tud_network_xmit копирует кадр сразу (tud_network_xmit_cb) */
+        tud_network_xmit(p, 0U);
+        s_stats.tx_frames++;
+        pbuf_free(p);   /* ссылка очереди; TCP хранит сегмент до подтверждения сам */
+    }
+}
+
+/**
+ * @brief  Ставит кадр в очередь отправки без копирования (pbuf_ref). Пока
+ *         кадр в очереди, lwIP его не меняет (tcp_output_segment_busy).
+ * @param  p кадр
+ * @return true - поставлен; false - очередь полна
+ */
+static bool usb_eth_tx_enqueue(struct pbuf *p)
+{
+    if (s_tx_count >= USB_ETH_TX_QUEUE_LEN)
+    {
+        return false;
+    }
+    pbuf_ref(p);
+    s_tx_queue[(uint8_t)((s_tx_head + s_tx_count) % USB_ETH_TX_QUEUE_LEN)] = p;
+    s_tx_count++;
+    if (s_tx_count > s_stats.tx_queue_max_used)
+    {
+        s_stats.tx_queue_max_used = s_tx_count;
+    }
+    return true;
+}
+
+/**
+ * @brief  Кадр не отправлен: USB не подключён.
+ * @param  p кадр
+ * @return ERR_IF
+ */
+static err_t usb_eth_tx_no_usb(const struct pbuf *p)
+{
+    (void)p;
+    usb_eth_tx_clear(true);
+    s_stats.tx_drop_no_usb++;
+    USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TX_NO_USB, 0U, p->tot_len);
+    return ERR_IF;
+}
+
+/**
+ * @brief  Отправка кадра lwIP в USB (netif->linkoutput). Процессор не ждёт
+ *         USB: кадр сразу копируется в свободный буфер USB (NTB) либо
+ *         ставится в очередь и уходит из USB_Process(). Ждёт (не дольше
+ *         USB_ETH_TX_TIMEOUT_MS) только при полной очереди, по таймауту кадр
+ *         теряется (TCP перешлёт его сам).
  * @param  netif интерфейс
  * @param  p     кадр
- * @return ERR_OK - отправлен; ERR_IF - USB не готов; ERR_TIMEOUT - таймаут
+ * @return ERR_OK - отправлен или в очереди; ERR_IF - USB не готов;
+ *         ERR_TIMEOUT - таймаут
  */
 static err_t usb_eth_linkoutput(struct netif *netif, struct pbuf *p)
 {
-    uint32_t start = HAL_GetTick();
     (void)netif;
 
+    if (!usb_eth_tx_link_ok())
+    {
+        return usb_eth_tx_no_usb(p);
+    }
+    /* Сначала очередь - кадры не обгоняют друг друга */
+    usb_eth_tx_drain();
+    if ((s_tx_count == 0U) && tud_network_can_xmit(p->tot_len))
+    {
+        tud_network_xmit(p, 0U);
+        s_stats.tx_frames++;
+        return ERR_OK;
+    }
+    if (usb_eth_tx_enqueue(p))
+    {
+        return ERR_OK;
+    }
+
+    /* Очередь полна: ждём, пока USB заберёт кадры */
+    uint32_t start = HAL_GetTick();
     for (;;)
     {
-        /* Не tud_ready(): при программном переподключении TinyUSB ещё считает
-         * себя подключённым, а кадр ушёл бы в никуда */
-        if (!usb_dev_func_mounted(USB_DEV_FUNC_ETH) || !tud_ready())
+        /* Продвигаем USB, чтобы завершилась предыдущая передача. Входящие
+         * кадры при этом только ставятся в очередь (tud_network_recv_cb) и
+         * не попадают в lwIP рекурсивно. */
+        tud_task();
+        if (!usb_eth_tx_link_ok())
         {
-            s_stats.tx_drop_no_usb++;
-            USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TX_NO_USB, 0U, p->tot_len);
-            return ERR_IF;
+            return usb_eth_tx_no_usb(p);
         }
-        if (tud_network_can_xmit(p->tot_len))
+        usb_eth_tx_drain();
+        if (usb_eth_tx_enqueue(p))
         {
-            /* tud_network_xmit копирует кадр сразу (tud_network_xmit_cb) */
-            tud_network_xmit(p, 0U);
-            s_stats.tx_frames++;
             return ERR_OK;
         }
         if ((HAL_GetTick() - start) >= USB_ETH_TX_TIMEOUT_MS)
@@ -195,10 +320,6 @@ static err_t usb_eth_linkoutput(struct netif *netif, struct pbuf *p)
             USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TX_TIMEOUT, 0U, p->tot_len);
             return ERR_TIMEOUT;
         }
-        /* Продвигаем USB, чтобы завершилась предыдущая передача. Входящие
-         * кадры при этом только ставятся в очередь (tud_network_recv_cb) и
-         * не попадают в lwIP рекурсивно. */
-        tud_task();
     }
 }
 
@@ -432,6 +553,7 @@ static void usb_eth_do_deinit(void)
         s_rx_head = (uint8_t)((s_rx_head + 1U) % USB_ETH_RX_QUEUE_LEN);
         s_rx_count--;
     }
+    usb_eth_tx_clear(false);
     s_link_up = false;
     s_net_cb_pending = false;
     s_initialized = false;
@@ -492,9 +614,12 @@ static void usb_eth_process(void)
         return;
     }
     s_in_process = true;
+    usb_eth_tx_drain();     /* буферы USB, освободившиеся в tud_task() */
     usb_eth_rx_drain();
     sys_check_timeouts();
     usb_eth_update_state();
+    usb_eth_sock_output();  /* отложенная отправка TCP - полными сегментами */
+    usb_eth_tx_drain();
     s_in_process = false;
     usb_eth_mem_check();
 
@@ -645,6 +770,7 @@ HAL_StatusTypeDef USB_ETH_GetStats(USB_ETH_Stats_t *stats)
     *stats = s_stats;
     stats->pbuf_pool_size = (uint16_t)USB_ETH_RX_PBUF_POOL_SIZE;
     stats->pbuf_pool_max_used = (uint16_t)lwip_stats.memp[MEMP_PBUF_POOL]->max;
+    stats->tx_queue_len = (uint16_t)USB_ETH_TX_QUEUE_LEN;
     return HAL_OK;
 }
 

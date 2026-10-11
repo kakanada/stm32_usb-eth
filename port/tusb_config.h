@@ -70,10 +70,11 @@ extern "C" {
 #define CFG_TUD_ECM_RNDIS            0
 #define CFG_TUD_NCM                  1
 #define CFG_TUD_NET_MTU              1514   /* размер кадра Ethernet (14 + 1500) */
-#define CFG_TUD_NCM_IN_NTB_MAX_SIZE  2048   /* минимум по CDC-NCM 1.0, табл. 6-4 */
+#define CFG_TUD_NCM_IN_NTB_MAX_SIZE  USB_ETH_NTB_IN_SIZE   /* не меньше 2048 (CDC-NCM 1.0) */
 #define CFG_TUD_NCM_OUT_NTB_MAX_SIZE 2048
 #define CFG_TUD_NCM_OUT_NTB_N        1
-#define CFG_TUD_NCM_IN_NTB_N         1
+/* Два и больше буфера: пока один идёт по USB, следующий заполняется - отправка не ждёт */
+#define CFG_TUD_NCM_IN_NTB_N         USB_ETH_NTB_IN_NUM
 
 /* --- Виртуальный COM-порт CDC-ACM: драйвер встроен в Windows 10/11, Linux, macOS --- */
 #define CFG_TUD_CDC                  1

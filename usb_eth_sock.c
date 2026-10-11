@@ -346,6 +346,39 @@ static err_t usb_eth_tcp_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
     return usb_eth_tcp_cb_result(newpcb);
 }
 
+/**
+ * @brief Отправляет в сеть данные, поставленные USB_ETH_TCP_Send().
+ * @param conn открытое соединение
+ */
+static void usb_eth_tcp_output(USB_ETH_TcpConn_t *conn)
+{
+    if (conn->tx_pending == 0U)
+    {
+        return;
+    }
+    err_t err = tcp_output((struct tcp_pcb *)conn->pcb);
+    if (err == ERR_OK)
+    {
+        conn->tx_pending = 0U;
+    }
+    else
+    {
+        /* Данные остаются в очереди lwIP - повтор в следующем USB_Process() */
+        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TCP_SEND_FAIL, conn->server->port, err);
+    }
+}
+
+void usb_eth_sock_output(void)
+{
+    for (uint32_t i = 0U; i < USB_ETH_MAX_TCP_CONNECTIONS; i++)
+    {
+        if (usb_eth_conn_valid(&s_conns[i]))
+        {
+            usb_eth_tcp_output(&s_conns[i]);
+        }
+    }
+}
+
 /* ------------------------------------------------------------------------- */
 /*  TCP: публичный API                                                       */
 /* ------------------------------------------------------------------------- */
@@ -422,15 +455,18 @@ HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, ui
     }
     if (len > USB_ETH_TCP_GetFreeSpace(conn))
     {
+        usb_eth_tcp_output(conn);   /* место освободится после отправки и подтверждения */
         return HAL_BUSY;
     }
 
-    struct tcp_pcb *pcb = (struct tcp_pcb *)conn->pcb;
-    /* tcp_write атомарен: либо ставит в очередь всё, либо ничего */
-    err_t err = tcp_write(pcb, data, len, TCP_WRITE_FLAG_COPY);
+    /* tcp_write атомарен: либо ставит в очередь всё, либо ничего. Данные
+     * дописываются в неотправленный сегмент, пока он не дорос до MSS, - в
+     * сеть они уйдут в USB_Process() (usb_eth_sock_output) пачкой. */
+    err_t err = tcp_write((struct tcp_pcb *)conn->pcb, data, len, TCP_WRITE_FLAG_COPY);
     if (err == ERR_MEM)
     {
         USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_SEND_NO_MEM, conn->server->port, len);
+        usb_eth_tcp_output(conn);   /* освободить очередь как можно раньше */
         return HAL_BUSY;
     }
     if (err != ERR_OK)
@@ -438,12 +474,18 @@ HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, ui
         USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TCP_SEND_FAIL, conn->server->port, err);
         return HAL_ERROR;
     }
-    err = tcp_output(pcb);
-    if (err != ERR_OK)
+    conn->tx_pending = 1U;
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef USB_ETH_TCP_Flush(USB_ETH_TcpConn_t *conn)
+{
+    if (usb_eth_api_bad(USB_DEV_API_TCP_FLUSH, false, false) ||
+        usb_eth_conn_bad(USB_DEV_API_TCP_FLUSH, conn))
     {
-        /* Данные уже в очереди lwIP - уйдут при следующей попытке; только лог */
-        USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TCP_SEND_FAIL, conn->server->port, err);
+        return HAL_ERROR;
     }
+    usb_eth_tcp_output(conn);
     return HAL_OK;
 }
 

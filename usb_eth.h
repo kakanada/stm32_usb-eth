@@ -76,6 +76,7 @@ struct USB_ETH_TcpConn_s
     /* --- Внутренние поля (не трогать, только через API) --- */
     void *pcb;                     /**< struct tcp_pcb* lwIP; NULL - соединение закрыто */
     uint8_t used;                  /**< слот пула занят */
+    uint8_t tx_pending;            /**< есть данные для отправки в USB_Process() */
 };
 
 /** TCP-сервер (слушающий порт, слот статического пула). */
@@ -187,6 +188,9 @@ typedef struct
     uint32_t tx_drop_no_usb;     /**< кадров к ПК потеряно: USB не подключён */
     uint16_t pbuf_pool_size;     /**< USB_ETH_RX_PBUF_POOL_SIZE */
     uint16_t pbuf_pool_max_used; /**< максимум одновременно занятых буферов приёма */
+    uint16_t tx_queue_len;       /**< USB_ETH_TX_QUEUE_LEN */
+    uint16_t tx_queue_max_used;  /**< максимум кадров в очереди отправки (ждали USB);
+                                      дошло до tx_queue_len - увеличить очередь */
 } USB_ETH_Stats_t;
 
 /**
@@ -216,6 +220,9 @@ USB_ETH_TcpServer_t *USB_ETH_TCP_Listen(uint16_t port, const USB_ETH_TcpHandlers
 /**
  * @brief  Ставит данные в очередь отправки: либо целиком, либо ничего.
  *         Данные копируются - буфер можно переиспользовать сразу после вызова.
+ *         В сеть данные уходят в ближайшем USB_Process() (или сразу - по
+ *         USB_ETH_TCP_Flush()): несколько Send подряд склеиваются в полные
+ *         TCP-сегменты, а не уходят пакетом на каждый вызов.
  * @param  conn соединение
  * @param  data данные
  * @param  len  длина (0 - ничего не делает, HAL_OK)
@@ -231,6 +238,15 @@ HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, ui
  * @return как у USB_ETH_TCP_Send()
  */
 HAL_StatusTypeDef USB_ETH_TCP_SendString(USB_ETH_TcpConn_t *conn, const char *str);
+
+/**
+ * @brief  Отправляет в сеть данные, поставленные USB_ETH_TCP_Send(), не
+ *         дожидаясь USB_Process(). Обычно не нужна: USB_Process() делает это
+ *         сам, и склейка нескольких Send в один сегмент экономит процессор и сеть.
+ * @param  conn соединение
+ * @return HAL_OK; HAL_ERROR - соединение закрыто/неверный параметр
+ */
+HAL_StatusTypeDef USB_ETH_TCP_Flush(USB_ETH_TcpConn_t *conn);
 
 /**
  * @brief  Сколько байт сейчас гарантированно примет USB_ETH_TCP_Send().

@@ -45,6 +45,12 @@ bool usb_eth_is_ready(void);
 void usb_eth_sock_link_lost(void);
 
 /**
+ * @brief Отправляет в сеть данные, накопленные USB_ETH_TCP_Send() во всех
+ *        соединениях (из USB_Process(): несколько Send - одним сегментом).
+ */
+void usb_eth_sock_output(void);
+
+/**
  * @brief Закрывает все соединения (LINK_LOST), удаляет TCP-серверы и UDP-сокеты
  *        и очищает пулы (вызывается из USB_ETH_DeInit()).
  */
