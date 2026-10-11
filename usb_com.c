@@ -291,6 +291,11 @@ void tud_cdc_tx_complete_cb(uint8_t itf)
 
 void usb_com_process(void)
 {
+    if (!s_initialized && !s_was_open && !s_tx_drop_pending)
+    {
+        return;   /* COM не включён и ждать нечего - холостой проход главного цикла дешёвый */
+    }
+
     uint8_t chunk[USB_COM_RX_CHUNK];
     /* Не больше одного буфера приёма за проход - главный цикл не застревает здесь,
      * даже если ПК шлёт без остановки. */

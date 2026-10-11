@@ -18,6 +18,19 @@
 
 #include "usb_dev_opts.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+/* Быстрые копирование и контрольная сумма (usb_eth.c): словами по 4 байта вместо
+ * побайтового memcpy облегчённой libc. Копирование постоянной длины (адреса, заголовки)
+ * остаётся на встроенном memcpy компилятора. */
+void *usb_eth_memcpy(void *dst, const void *src, size_t len);
+uint16_t usb_eth_chksum_copy(void *dst, const void *src, uint16_t len);
+#define MEMCPY(dst, src, len) \
+    (__builtin_constant_p(len) ? __builtin_memcpy((dst), (src), (len)) : \
+                                 usb_eth_memcpy((dst), (src), (len)))
+#define SMEMCPY(dst, src, len) MEMCPY(dst, src, len)
+
 /* --- Система: без ОС, весь стек обслуживается из USB_Process() --- */
 #define NO_SYS                          1
 #define SYS_LIGHTWEIGHT_PROT            0   /* lwIP не вызывается из прерываний */
@@ -57,9 +70,20 @@
 #define TCP_WND                         (4 * TCP_MSS)
 #define TCP_SND_QUEUELEN                ((4 * TCP_SND_BUF) / TCP_MSS)
 #define LWIP_TCP_KEEPALIVE              1
-/* Контрольная сумма TCP считается при копировании данных в tcp_write - один
- * проход по данным вместо двух */
+/* Контрольная сумма TCP считается при копировании данных в tcp_write (одним проходом -
+ * usb_eth_chksum_copy), остальные суммы - 32-битным алгоритмом lwIP */
 #define LWIP_CHECKSUM_ON_COPY           1
+#ifdef USB_ETH_USE_CSUM
+/* Суммы - из библиотеки csum (stm32_crc32, CSUM_Inet*): в проект добавляются csum.c, csum.h,
+ * csum_tables.h. Результат тот же, что у встроенных функций usb_eth. */
+#include "csum.h"
+#define LWIP_CHKSUM(dataptr, len)       CSUM_Inet((const uint8_t *)(dataptr), (uint32_t)(len))
+#define LWIP_CHKSUM_COPY(dst, src, len) \
+    CSUM_Inet_Copy((uint8_t *)(dst), (const uint8_t *)(src), (uint32_t)(len))
+#else
+#define LWIP_CHKSUM_ALGORITHM           3
+#define LWIP_CHKSUM_COPY(dst, src, len) usb_eth_chksum_copy((dst), (src), (len))
+#endif
 
 /* --- Пулы: из размеров пулов usb_eth (+ служебные pcb) --- */
 #define MEMP_NUM_TCP_PCB                (USB_ETH_MAX_TCP_CONNECTIONS + 2)

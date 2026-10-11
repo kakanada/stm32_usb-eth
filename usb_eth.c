@@ -161,6 +161,116 @@ static uint32_t usb_eth_ip_from_lwip(const ip4_addr_t *addr)
 }
 
 /* ------------------------------------------------------------------------- */
+/*  Быстрые копирование и контрольная сумма для lwIP (MEMCPY, LWIP_CHKSUM_COPY) */
+/* ------------------------------------------------------------------------- */
+
+/** 32-битное слово по выровненному / произвольному адресу (без нарушения aliasing). */
+typedef uint32_t __attribute__((may_alias)) usb_eth_w_t;
+typedef uint32_t __attribute__((may_alias, aligned(1))) usb_eth_wu_t;
+
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
+void *usb_eth_memcpy(void *dst, const void *src, size_t len)
+{
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+
+    if ((((uintptr_t)d | (uintptr_t)s) & 3U) == 0U)
+    {
+        usb_eth_w_t *dw = (usb_eth_w_t *)d;
+        const usb_eth_w_t *sw = (const usb_eth_w_t *)s;
+
+        for (; len >= 16U; len -= 16U)
+        {
+            uint32_t a = sw[0], b = sw[1], c = sw[2], e = sw[3];
+            dw[0] = a;
+            dw[1] = b;
+            dw[2] = c;
+            dw[3] = e;
+            dw += 4;
+            sw += 4;
+        }
+        for (; len >= 4U; len -= 4U)
+        {
+            *dw++ = *sw++;
+        }
+        d = (uint8_t *)dw;
+        s = (const uint8_t *)sw;
+    }
+    else
+    {
+        /* Разное выравнивание: слова по произвольному адресу (на ядрах без
+         * невыровненного доступа компилятор сам разложит их на байты) */
+        for (; len >= 4U; len -= 4U)
+        {
+            *(usb_eth_wu_t *)d = *(const usb_eth_wu_t *)s;
+            d += 4;
+            s += 4;
+        }
+    }
+    while (len-- > 0U)
+    {
+        *d++ = *s++;
+    }
+    return dst;
+}
+
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
+uint16_t usb_eth_chksum_copy(void *dst, const void *src, uint16_t len)
+{
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+    uint64_t acc = 0U;   /* сумма 32-битных слов: ADDS + ADC на слово, без проверок переноса */
+    uint32_t n = len;
+
+    /* Сумма слов по 4 байта, свёрнутая в 16 бит, равна сумме слов по 2 байта (2^16 = 1 по
+     * модулю 65535): результат тот же, что у lwip_standard_chksum (порядок памяти) */
+    for (; n >= 16U; n -= 16U)
+    {
+        uint32_t w0 = ((const usb_eth_wu_t *)s)[0];
+        uint32_t w1 = ((const usb_eth_wu_t *)s)[1];
+        uint32_t w2 = ((const usb_eth_wu_t *)s)[2];
+        uint32_t w3 = ((const usb_eth_wu_t *)s)[3];
+        ((usb_eth_wu_t *)d)[0] = w0;
+        ((usb_eth_wu_t *)d)[1] = w1;
+        ((usb_eth_wu_t *)d)[2] = w2;
+        ((usb_eth_wu_t *)d)[3] = w3;
+        acc += w0;
+        acc += w1;
+        acc += w2;
+        acc += w3;
+        s += 16;
+        d += 16;
+    }
+    for (; n >= 4U; n -= 4U)
+    {
+        uint32_t w = *(const usb_eth_wu_t *)s;
+        *(usb_eth_wu_t *)d = w;
+        acc += w;
+        s += 4;
+        d += 4;
+    }
+    if (n >= 2U)
+    {
+        d[0] = s[0];
+        d[1] = s[1];
+        acc += (uint32_t)s[0] | ((uint32_t)s[1] << 8);
+        s += 2;
+        d += 2;
+        n -= 2U;
+    }
+    if (n != 0U)
+    {
+        d[0] = s[0];
+        acc += s[0];
+    }
+    acc = (acc & 0xFFFFFFFFU) + (acc >> 32);
+    acc = (acc & 0xFFFFU) + (acc >> 16);
+    acc = (acc & 0xFFFFU) + (acc >> 16);
+    acc = (acc & 0xFFFFU) + (acc >> 16);
+    return (uint16_t)acc;
+}
+
+/* ------------------------------------------------------------------------- */
 /*  lwIP <-> TinyUSB                                                         */
 /* ------------------------------------------------------------------------- */
 
