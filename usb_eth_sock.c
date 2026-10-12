@@ -223,7 +223,9 @@ static err_t usb_eth_tcp_recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p,
         {
             break;   /* обработчика нет или соединение закрыто внутри on_receive */
         }
+        USB_PROF_BEGIN(app);
         h->on_receive(conn, (const uint8_t *)q->payload, q->len);
+        USB_PROF_END(app, USB_PROF_APP_RX, q->len);
     }
     pbuf_free(p);
     return usb_eth_tcp_cb_result(pcb);
@@ -459,7 +461,9 @@ HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, ui
     /* tcp_write атомарен: либо ставит в очередь всё, либо ничего. Данные
      * дописываются в неотправленный сегмент, пока он не дорос до MSS, - в
      * сеть они уйдут в USB_Process() (usb_eth_sock_output) пачкой. */
+    USB_PROF_BEGIN(tw);
     err_t err = tcp_write((struct tcp_pcb *)conn->pcb, data, len, TCP_WRITE_FLAG_COPY);
+    USB_PROF_END(tw, USB_PROF_TCP_WRITE, len);
     if (err == ERR_MEM)
     {
         USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_SEND_NO_MEM, conn->server->port, len);

@@ -14,6 +14,8 @@
  ******************************************************************************
  */
 
+#include <string.h>
+
 #include "usb_dev.h"
 #include "usb_dev_internal.h"
 
@@ -312,6 +314,58 @@ static void usb_dev_update_funcs(void)
     s_reenum_tick = HAL_GetTick();
 }
 
+#if USB_ETH_PROFILE
+static USB_Profile_t s_prof;
+static uint32_t s_prof_start_ms;
+volatile uint32_t usb_prof_isr_total;
+
+void usb_prof_add(USB_ProfId_t id, uint32_t cycles, uint32_t bytes)
+{
+    /* Из основного кода и из прерывания: запись под запретом прерываний */
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    s_prof.item[id].cycles += cycles;
+    s_prof.item[id].calls++;
+    s_prof.item[id].bytes += bytes;
+    __set_PRIMASK(primask);
+}
+
+void USB_ProfileReset(void)
+{
+    if (usb_dev_in_isr())
+    {
+        return;
+    }
+    /* Счётчик тактов DWT: включается здесь, а не в Init, - окно можно начать в любой момент */
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+#if (__CORTEX_M == 7)
+    DWT->LAR = 0xC5ACCE55UL;
+#endif
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    memset(&s_prof, 0, sizeof(s_prof));
+    s_prof_start_ms = HAL_GetTick();
+    __set_PRIMASK(primask);
+}
+
+HAL_StatusTypeDef USB_GetProfile(USB_Profile_t *out)
+{
+    if ((out == NULL) || usb_dev_in_isr())
+    {
+        return HAL_ERROR;
+    }
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    *out = s_prof;
+    __set_PRIMASK(primask);
+    out->window_ms = HAL_GetTick() - s_prof_start_ms;
+    out->cpu_hz = SystemCoreClock;
+    return HAL_OK;
+}
+#endif /* USB_ETH_PROFILE */
+
 /* ------------------------------------------------------------------------- */
 /*  Колбэки TinyUSB                                                          */
 /* ------------------------------------------------------------------------- */
@@ -379,7 +433,10 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size)
     {
         return true;
     }
-    return s_eth->recv(src, size);
+    USB_PROF_BEGIN(rx);
+    bool ok = s_eth->recv(src, size);
+    USB_PROF_END(rx, USB_PROF_RECV_CB, size);
+    return ok;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -397,7 +454,12 @@ void USB_Process(void)
     {
         return;   /* не ошибка: Init ещё не вызывался */
     }
-    tud_task();
+    USB_PROF_BEGIN(proc);
+    {
+        USB_PROF_BEGIN(task);
+        tud_task();
+        USB_PROF_END(task, USB_PROF_TUD_TASK, 0);
+    }
     usb_dev_update_funcs();
     usb_dev_log_link();
     if (s_eth != NULL)
@@ -406,13 +468,22 @@ void USB_Process(void)
     }
     usb_com_process();
     usb_dev_log_poll();
+    USB_PROF_END(proc, USB_PROF_PROCESS, 0);
 }
 
 void USB_IRQHandler(void)
 {
     if (s_started)
     {
+#if USB_ETH_PROFILE
+        const uint32_t t0 = DWT->CYCCNT;
         tusb_int_handler(USB_DEV_RHPORT, true);
+        const uint32_t d = DWT->CYCCNT - t0;
+        usb_prof_isr_total += d;
+        usb_prof_add(USB_PROF_ISR, d, 0U);
+#else
+        tusb_int_handler(USB_DEV_RHPORT, true);
+#endif
     }
 }
 

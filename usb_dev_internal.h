@@ -44,6 +44,28 @@ void usb_dev_log(uint16_t code, uint16_t source_id, int32_t value, bool limited)
 #define USB_DEV_LOG_ERR(code, source_id, value) ((void)0)
 #endif
 
+#if USB_ETH_PROFILE
+#if !defined(__CORTEX_M) || (__CORTEX_M < 3)
+#error "USB_ETH_PROFILE: нужен DWT (Cortex-M3 и старше)"
+#endif
+/** Прибавляет к этапу такты, число вызовов и байты. Вызывать через USB_PROF_END. */
+void usb_prof_add(USB_ProfId_t id, uint32_t cycles, uint32_t bytes);
+/** Суммарные такты прерывания USB (для вычитания из этапов основного кода). */
+extern volatile uint32_t usb_prof_isr_total;
+
+/** Начало этапа n (локальные переменные, n - любое имя). */
+#define USB_PROF_BEGIN(n) \
+    const uint32_t usb_prof_t_##n = DWT->CYCCNT; \
+    const uint32_t usb_prof_i_##n = usb_prof_isr_total
+/** Конец этапа n: id этапа, bytes - объём обработанных данных. */
+#define USB_PROF_END(n, id, bytes) \
+    usb_prof_add((id), (DWT->CYCCNT - usb_prof_t_##n) - (usb_prof_isr_total - usb_prof_i_##n), \
+                 (uint32_t)(bytes))
+#else
+#define USB_PROF_BEGIN(n)           ((void)0)
+#define USB_PROF_END(n, id, bytes)  ((void)0)
+#endif
+
 /* Источник (src) для кодов API_ERROR: какая функция отказала. */
 #define USB_DEV_API_PROCESS          1U   /**< USB_Process */
 #define USB_DEV_API_COM_INIT         2U   /**< USB_COM_Init */

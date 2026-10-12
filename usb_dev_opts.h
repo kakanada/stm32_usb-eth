@@ -29,6 +29,13 @@
 #define USB_DEV_LOG_ENABLE 0
 #endif
 
+/** 1 - включить счётчики времени (тактов DWT) по этапам работы USB и сети: USB_GetProfile().
+ *  Нужны для поиска узких мест; на ядрах без DWT (Cortex-M0) недоступно. По умолчанию 0 -
+ *  в код ничего не добавляется. Задаётся глобальным define (-DUSB_ETH_PROFILE=1). */
+#ifndef USB_ETH_PROFILE
+#define USB_ETH_PROFILE 0
+#endif
+
 #if defined(USB_ETH_LOG_ENABLE)
 #error "usb_eth 2.0: USB_ETH_LOG_ENABLE переименован в USB_DEV_LOG_ENABLE"
 #endif

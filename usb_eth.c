@@ -318,7 +318,7 @@ static void usb_eth_tx_clear(bool count_drop)
  * @brief Передаёт кадры из очереди отправки в свободные буферы USB (NTB),
  *        сколько поместится. Не ждёт: остаток уйдёт при следующем вызове.
  */
-static void usb_eth_tx_drain(void)
+static void usb_eth_tx_drain_impl(void)
 {
     if (s_tx_count == 0U)
     {
@@ -337,6 +337,17 @@ static void usb_eth_tx_drain(void)
         s_stats.tx_frames++;
         pbuf_free(p);   /* ссылка очереди; TCP хранит сегмент до подтверждения сам */
     }
+}
+
+static void usb_eth_tx_drain(void)
+{
+    if (s_tx_count == 0U)
+    {
+        return;   /* пустая очередь - самый частый случай, счётчик времени не нужен */
+    }
+    USB_PROF_BEGIN(drn);
+    usb_eth_tx_drain_impl();
+    USB_PROF_END(drn, USB_PROF_TX_DRAIN, 0);
 }
 
 /**
@@ -386,7 +397,7 @@ static err_t usb_eth_tx_no_usb(const struct pbuf *p)
  * @return ERR_OK - отправлен или в очереди; ERR_IF - USB не готов;
  *         ERR_TIMEOUT - таймаут
  */
-static err_t usb_eth_linkoutput(struct netif *netif, struct pbuf *p)
+static err_t usb_eth_linkoutput_impl(struct netif *netif, struct pbuf *p)
 {
     (void)netif;
 
@@ -409,28 +420,44 @@ static err_t usb_eth_linkoutput(struct netif *netif, struct pbuf *p)
 
     /* Очередь полна: ждём, пока USB заберёт кадры */
     uint32_t start = HAL_GetTick();
+    USB_PROF_BEGIN(wait);
     for (;;)
     {
         /* Продвигаем USB, чтобы завершилась предыдущая передача. Входящие
          * кадры при этом только ставятся в очередь (tud_network_recv_cb) и
          * не попадают в lwIP рекурсивно. */
-        tud_task();
+        {
+            USB_PROF_BEGIN(wtask);
+            tud_task();
+            USB_PROF_END(wtask, USB_PROF_TUD_TASK_WAIT, 0);
+        }
         if (!usb_eth_tx_link_ok())
         {
+            USB_PROF_END(wait, USB_PROF_TX_WAIT, 0);
             return usb_eth_tx_no_usb(p);
         }
         usb_eth_tx_drain();
         if (usb_eth_tx_enqueue(p))
         {
+            USB_PROF_END(wait, USB_PROF_TX_WAIT, 0);
             return ERR_OK;
         }
         if ((HAL_GetTick() - start) >= USB_ETH_TX_TIMEOUT_MS)
         {
             s_stats.tx_drop_timeout++;
             USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_TX_TIMEOUT, 0U, p->tot_len);
+            USB_PROF_END(wait, USB_PROF_TX_WAIT, 0);
             return ERR_TIMEOUT;
         }
     }
+}
+
+static err_t usb_eth_linkoutput(struct netif *netif, struct pbuf *p)
+{
+    USB_PROF_BEGIN(lo);
+    err_t err = usb_eth_linkoutput_impl(netif, p);
+    USB_PROF_END(lo, USB_PROF_LINKOUT, p->tot_len);
+    return err;
 }
 
 /**
@@ -506,7 +533,10 @@ uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg)
 {
     struct pbuf *p = (struct pbuf *)ref;
     (void)arg;
-    return pbuf_copy_partial(p, dst, p->tot_len, 0U);
+    USB_PROF_BEGIN(xcb);
+    uint16_t n = pbuf_copy_partial(p, dst, p->tot_len, 0U);
+    USB_PROF_END(xcb, USB_PROF_XMIT_CB, n);
+    return n;
 }
 
 /**
@@ -549,7 +579,11 @@ static void usb_eth_rx_drain(void)
             done++;
 
             s_stats.rx_frames++;
+            USB_PROF_BEGIN(inp);
+            const uint16_t plen = p->tot_len;
+            (void)plen;
             err_t err = s_netif.input(p, &s_netif);
+            USB_PROF_END(inp, USB_PROF_RX_INPUT, plen);
             if (err != ERR_OK)
             {
                 USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_RX_INPUT_FAIL, 0U, err);
@@ -734,9 +768,17 @@ static void usb_eth_process(void)
     s_in_process = true;
     usb_eth_tx_drain();     /* буферы USB, освободившиеся в tud_task() */
     usb_eth_rx_drain();
-    sys_check_timeouts();
+    {
+        USB_PROF_BEGIN(tmo);
+        sys_check_timeouts();
+        USB_PROF_END(tmo, USB_PROF_TIMEOUTS, 0);
+    }
     usb_eth_update_state();
-    usb_eth_sock_output();  /* отложенная отправка TCP - полными сегментами */
+    {
+        USB_PROF_BEGIN(sout);
+        usb_eth_sock_output();  /* отложенная отправка TCP - полными сегментами */
+        USB_PROF_END(sout, USB_PROF_SOCK_OUTPUT, 0);
+    }
     usb_eth_tx_drain();
     s_in_process = false;
     usb_eth_mem_check();

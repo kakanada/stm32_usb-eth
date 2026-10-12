@@ -48,6 +48,32 @@
 STM32H7 с единственным USB - H72x/H73x/H7Ax/H7Bx, где OTG_HS работает как порт `0`) вместо
 `HAL_PCD_IRQHandler()`.
 
+### `void USB_ProfileReset(void)` / `HAL_StatusTypeDef USB_GetProfile(USB_Profile_t *out)`
+
+Только при `USB_ETH_PROFILE = 1` (по умолчанию `0`, в код ничего не добавляется). `USB_ProfileReset()`
+включает счётчик тактов DWT и начинает окно измерения; `USB_GetProfile()` отдаёт копию счётчиков
+с начала окна: для каждого этапа `USB_PROF_xxx` - такты (`cycles`), число вызовов (`calls`) и байты
+(`bytes`), плюс `window_ms` и `cpu_hz`. Доля процессора этапа = `cycles / (window_ms * cpu_hz /
+1000)`. Этапы вложены (время вложенного входит в объемлющий), время прерывания USB
+(`USB_PROF_ISR`) из этапов основного кода вычтено, другие прерывания проекта в них входят.
+
+| Этап | Что измеряет |
+|---|---|
+| `USB_PROF_ISR` | прерывание USB целиком (FIFO, события TinyUSB) |
+| `USB_PROF_PROCESS` | весь `USB_Process()` за проход (`calls` - число проходов цикла) |
+| `USB_PROF_TUD_TASK` | `tud_task()` внутри `USB_Process()` |
+| `USB_PROF_RECV_CB` | приём кадра от ПК: копия в буфер lwIP, `bytes` - кадры |
+| `USB_PROF_RX_INPUT` | `ethernet_input()` lwIP на принятый кадр вместе с кодом пользователя |
+| `USB_PROF_APP_RX` | обработчики `on_receive`, `bytes` - данные TCP |
+| `USB_PROF_TIMEOUTS` | `sys_check_timeouts()` |
+| `USB_PROF_SOCK_OUTPUT` | отложенный `tcp_output()` всех соединений |
+| `USB_PROF_TX_DRAIN` | очередь кадров к ПК -> буферы USB |
+| `USB_PROF_LINKOUT` | отправка кадра lwIP в USB целиком, `bytes` - кадры |
+| `USB_PROF_XMIT_CB` | копия кадра в буфер USB (NTB) |
+| `USB_PROF_TX_WAIT` | ожидание места при полной очереди отправки |
+| `USB_PROF_TUD_TASK_WAIT` | `tud_task()` внутри ожидания (часть `TX_WAIT`) |
+| `USB_PROF_TCP_WRITE` | `tcp_write()` внутри `USB_ETH_TCP_Send()`: копия и сумма, `bytes` - данные |
+
 ### `bool USB_IsCompositeSupported(void)`
 
 `true` - USB-контроллер этого микроконтроллера (порт `USB_DEV_RHPORT`) тянет сеть и COM
