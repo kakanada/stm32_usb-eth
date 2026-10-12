@@ -289,7 +289,7 @@ void tud_cdc_tx_complete_cb(uint8_t itf)
 /*  Внутренний API                                                           */
 /* ------------------------------------------------------------------------- */
 
-void usb_com_process(void)
+void usb_com_process(bool slow)
 {
     if (!s_initialized && !s_was_open && !s_tx_drop_pending)
     {
@@ -303,14 +303,17 @@ void usb_com_process(void)
 
     /* Сброс шины (кабель вынут и вставлен) обрывает передачу без колбэка
      * завершения - отложенная очистка выполняется здесь. */
-    usb_com_tx_drop_try();
-
-    bool open = USB_COM_IsOpen();
-    if (open != s_was_open)
+    if (slow)
     {
-        s_was_open = open;
-        USB_DEV_LOG(open ? USB_DEV_LOG_CODE_COM_OPEN : USB_DEV_LOG_CODE_COM_CLOSE, 0U,
-                    open ? USB_COM_GetBaudRate() : 0U);
+        usb_com_tx_drop_try();
+
+        bool open = USB_COM_IsOpen();
+        if (open != s_was_open)
+        {
+            s_was_open = open;
+            USB_DEV_LOG(open ? USB_DEV_LOG_CODE_COM_OPEN : USB_DEV_LOG_CODE_COM_CLOSE, 0U,
+                        open ? USB_COM_GetBaudRate() : 0U);
+        }
     }
 
     /* Обработчик вызывается только отсюда, а не из tud_cdc_rx_cb(): tud_task()

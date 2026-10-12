@@ -48,19 +48,46 @@ void usb_dev_log(uint16_t code, uint16_t source_id, int32_t value, bool limited)
 #if !defined(__CORTEX_M) || (__CORTEX_M < 3)
 #error "USB_ETH_PROFILE: нужен DWT (Cortex-M3 и старше)"
 #endif
-/** Прибавляет к этапу такты, число вызовов и байты. Вызывать через USB_PROF_END. */
+/** Прибавляет к этапу такты, число вызовов и байты (сырое значение - для прерывания). */
 void usb_prof_add(USB_ProfId_t id, uint32_t cycles, uint32_t bytes);
+/** То же для этапа основного кода: из прошедших тактов вычитается время прерываний USB. */
+void usb_prof_add_net(USB_ProfId_t id, uint32_t elapsed, uint32_t isr, uint32_t bytes);
 /** Суммарные такты прерывания USB (для вычитания из этапов основного кода). */
 extern volatile uint32_t usb_prof_isr_total;
 
+/** Согласованный снимок: счётчик тактов и сумма тактов прерываний. Прерывание между двумя
+ *  чтениями сумм (на конце этапа оно давало бы отрицательное время) приводит к повтору. */
+static inline void usb_prof_snap(uint32_t *cyc, uint32_t *isr)
+{
+    uint32_t i1;
+    uint32_t i2;
+    uint32_t c;
+
+    do
+    {
+        i1 = usb_prof_isr_total;
+        c = DWT->CYCCNT;
+        i2 = usb_prof_isr_total;
+    } while (i1 != i2);
+    *cyc = c;
+    *isr = i1;
+}
+
 /** Начало этапа n (локальные переменные, n - любое имя). */
 #define USB_PROF_BEGIN(n) \
-    const uint32_t usb_prof_t_##n = DWT->CYCCNT; \
-    const uint32_t usb_prof_i_##n = usb_prof_isr_total
+    uint32_t usb_prof_t_##n; \
+    uint32_t usb_prof_i_##n; \
+    usb_prof_snap(&usb_prof_t_##n, &usb_prof_i_##n)
 /** Конец этапа n: id этапа, bytes - объём обработанных данных. */
 #define USB_PROF_END(n, id, bytes) \
-    usb_prof_add((id), (DWT->CYCCNT - usb_prof_t_##n) - (usb_prof_isr_total - usb_prof_i_##n), \
-                 (uint32_t)(bytes))
+    do \
+    { \
+        uint32_t usb_prof_c_; \
+        uint32_t usb_prof_i_; \
+        usb_prof_snap(&usb_prof_c_, &usb_prof_i_); \
+        usb_prof_add_net((id), usb_prof_c_ - usb_prof_t_##n, usb_prof_i_ - usb_prof_i_##n, \
+                         (uint32_t)(bytes)); \
+    } while (0)
 #else
 #define USB_PROF_BEGIN(n)           ((void)0)
 #define USB_PROF_END(n, id, bytes)  ((void)0)
@@ -143,7 +170,7 @@ uint8_t usb_dev_desc_com_ep_in(void);
  */
 typedef struct
 {
-    void (*process)(void);                                /**< обслуживание из USB_Process() */
+    void (*process)(bool slow);                         /**< обслуживание из USB_Process(); slow - раз в мс */
     bool (*recv)(const uint8_t *frame, uint16_t size);    /**< кадр от ПК (tud_network_recv_cb) */
 } usb_dev_eth_hooks_t;
 
@@ -153,7 +180,7 @@ typedef struct
  */
 void usb_dev_set_eth_hooks(const usb_dev_eth_hooks_t *hooks);
 
-/** @brief Обслуживание COM из USB_Process() (после tud_task()). */
-void usb_com_process(void);
+/** @brief Обслуживание COM из USB_Process() (после tud_task()); slow - раз в мс (медленные задачи). */
+void usb_com_process(bool slow);
 
 #endif /* USB_DEV_INTERNAL_H */

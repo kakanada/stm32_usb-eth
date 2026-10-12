@@ -42,6 +42,7 @@ static uint8_t s_req_funcs;      /* набор, запрошенный Init/DeIn
 static uint8_t s_active_funcs;   /* набор в текущих дескрипторах */
 static bool s_connected;         /* плата видна ПК (подтяжка D+ включена) */
 static bool s_reenum_wait;       /* идёт пауза переподключения */
+static uint32_t s_slow_tick;     /* миллисекунда последнего прохода медленных задач */
 static uint32_t s_reenum_tick;   /* начало паузы */
 static volatile bool s_mounted;  /* ПК сконфигурировал устройство */
 static volatile bool s_suspended;/* шина в режиме сна: ПК спит или кабель вынут */
@@ -330,6 +331,11 @@ void usb_prof_add(USB_ProfId_t id, uint32_t cycles, uint32_t bytes)
     __set_PRIMASK(primask);
 }
 
+void usb_prof_add_net(USB_ProfId_t id, uint32_t elapsed, uint32_t isr, uint32_t bytes)
+{
+    usb_prof_add(id, (elapsed >= isr) ? (elapsed - isr) : 0U, bytes);
+}
+
 void USB_ProfileReset(void)
 {
     if (usb_dev_in_isr())
@@ -455,19 +461,32 @@ void USB_Process(void)
         return;   /* не ошибка: Init ещё не вызывался */
     }
     USB_PROF_BEGIN(proc);
+    if (tud_task_event_ready())   /* без событий USB tud_task() ничего не делает - не вызываем */
     {
         USB_PROF_BEGIN(task);
         tud_task();
         USB_PROF_END(task, USB_PROF_TUD_TASK, 0);
     }
-    usb_dev_update_funcs();
-    usb_dev_log_link();
+
+    /* Медленные задачи (состояние, таймеры, лог) - раз в миллисекунду: холостой проход
+     * главного цикла остаётся дешёвым, а реакция на события USB - прежней по порядку величины. */
+    uint32_t now = HAL_GetTick();
+    bool slow = (now != s_slow_tick);
+    if (slow)
+    {
+        s_slow_tick = now;
+        usb_dev_update_funcs();
+        usb_dev_log_link();
+    }
     if (s_eth != NULL)
     {
-        s_eth->process();
+        s_eth->process(slow);
     }
-    usb_com_process();
-    usb_dev_log_poll();
+    usb_com_process(slow);
+    if (slow)
+    {
+        usb_dev_log_poll();
+    }
     USB_PROF_END(proc, USB_PROF_PROCESS, 0);
 }
 

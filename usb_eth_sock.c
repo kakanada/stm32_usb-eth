@@ -49,6 +49,9 @@ static USB_ETH_UdpSocket_t s_udp[USB_ETH_MAX_UDP_SOCKETS];
  * обязан вернуть ERR_ABRT (требование lwIP raw API). */
 static struct tcp_pcb *s_aborted_pcb;
 
+/* Есть соединение с данными, поставленными USB_ETH_TCP_Send() и ещё не отправленными в сеть */
+static bool s_tx_any;
+
 /* ------------------------------------------------------------------------- */
 /*  TCP: внутренние функции                                                  */
 /* ------------------------------------------------------------------------- */
@@ -408,6 +411,11 @@ void usb_eth_sock_output(void)
      * (например, длинная выдача лога) не стоит в выдаче всегда первым */
     static uint8_t first;
 
+    if (!s_tx_any)
+    {
+        return;   /* нечего отправлять - холостой проход главного цикла дешёвый */
+    }
+    s_tx_any = false;
     first = (uint8_t)((first + 1U) % USB_ETH_MAX_TCP_CONNECTIONS);
     for (uint32_t k = 0U; k < USB_ETH_MAX_TCP_CONNECTIONS; k++)
     {
@@ -416,6 +424,10 @@ void usb_eth_sock_output(void)
         if (usb_eth_conn_valid(conn))
         {
             usb_eth_tcp_output(conn);
+            if (conn->tx_pending != 0U)
+            {
+                s_tx_any = true;   /* tcp_output не прошёл - повтор в следующем проходе */
+            }
         }
     }
 }
@@ -520,6 +532,7 @@ HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, ui
         return HAL_ERROR;
     }
     conn->tx_pending = 1U;
+    s_tx_any = true;
     return HAL_OK;
 }
 

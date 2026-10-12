@@ -75,6 +75,7 @@ static uint32_t s_rand_state;
 static struct pbuf *s_rx_queue[USB_ETH_RX_QUEUE_LEN];
 static uint8_t s_rx_head;
 static uint8_t s_rx_count;
+static bool s_rx_stalled;   /* recv вернул false: приём ждёт освобождения очереди */
 
 /* Исходящие кадры, ждущие свободного буфера USB (ссылки pbuf, без копий). */
 static struct pbuf *s_tx_queue[USB_ETH_TX_QUEUE_LEN];
@@ -497,6 +498,7 @@ static bool usb_eth_recv(const uint8_t *src, uint16_t size)
     if (s_rx_count >= USB_ETH_RX_QUEUE_LEN)
     {
         /* Кадр остаётся в TinyUSB, новый приём не запускается - ПК ждёт (NAK) */
+        s_rx_stalled = true;   /* когда очередь освободится - подтолкнуть приём (usb_eth_rx_drain) */
         s_stats.rx_backpressure++;
         return false;
     }
@@ -563,6 +565,8 @@ uint32_t sys_now(void)
 static void usb_eth_rx_drain(void)
 {
     uint32_t done = 0U;
+
+    s_rx_stalled = false;
 
     /* Очередь короткая (экономия ОЗУ), поэтому после опустошения она сразу пополняется из
      * принятого USB-буфера - за один проход обрабатывается до USB_ETH_RX_BURST кадров */
@@ -757,7 +761,7 @@ void usb_eth_lwip_arg_error(void)
  * @brief Обслуживание сети из USB_Process(): кадры в lwIP, таймеры, состояние
  *        сети, отложенный DeInit.
  */
-static void usb_eth_process(void)
+static void usb_eth_process(bool slow)
 {
     if (!s_initialized)
     {
@@ -765,13 +769,19 @@ static void usb_eth_process(void)
     }
     s_in_process = true;
     usb_eth_tx_drain();     /* буферы USB, освободившиеся в tud_task() */
-    usb_eth_rx_drain();
+    /* Приём - когда есть кадры, ждал освобождения очереди, и раз в мс (на случай, если
+     * приём USB надо подтолкнуть) */
+    if (slow || s_rx_stalled || (s_rx_count > 0U))
+    {
+        usb_eth_rx_drain();
+    }
+    if (slow)
     {
         USB_PROF_BEGIN(tmo);
         sys_check_timeouts();
         USB_PROF_END(tmo, USB_PROF_TIMEOUTS, 0);
+        usb_eth_update_state();
     }
-    usb_eth_update_state();
     {
         USB_PROF_BEGIN(sout);
         usb_eth_sock_output();  /* отложенная отправка TCP - полными сегментами */
@@ -779,7 +789,10 @@ static void usb_eth_process(void)
     }
     usb_eth_tx_drain();
     s_in_process = false;
-    usb_eth_mem_check();
+    if (slow)
+    {
+        usb_eth_mem_check();
+    }
 
     if (s_deinit_pending)
     {
