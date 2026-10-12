@@ -73,17 +73,9 @@ uint16_t usb_eth_chksum_copy(void *dst, const void *src, uint16_t len);
 /* Контрольная сумма TCP считается при копировании данных в tcp_write (одним проходом -
  * usb_eth_chksum_copy), остальные суммы - 32-битным алгоритмом lwIP */
 #define LWIP_CHECKSUM_ON_COPY           1
-#ifdef USB_ETH_USE_CSUM
-/* Суммы - из библиотеки csum (stm32_crc32, CSUM_Inet*): в проект добавляются csum.c, csum.h,
- * csum_tables.h. Результат тот же, что у встроенных функций usb_eth. */
-#include "csum.h"
-#define LWIP_CHKSUM(dataptr, len)       CSUM_Inet((const uint8_t *)(dataptr), (uint32_t)(len))
-#define LWIP_CHKSUM_COPY(dst, src, len) \
-    CSUM_Inet_Copy((uint8_t *)(dst), (const uint8_t *)(src), (uint32_t)(len))
-#else
 #define LWIP_CHKSUM_ALGORITHM           3
 #define LWIP_CHKSUM_COPY(dst, src, len) usb_eth_chksum_copy((dst), (src), (len))
-#endif
+
 
 /* --- Пулы: из размеров пулов usb_eth (+ служебные pcb) --- */
 #define MEMP_NUM_TCP_PCB                (USB_ETH_MAX_TCP_CONNECTIONS + 2)
