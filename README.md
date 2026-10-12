@@ -149,10 +149,13 @@ define всё работает: сеть в режиме HOST, USB-порт OTG_
 | `USB_ETH_MAX_TCP_SERVERS` | `4` | сколько TCP-портов можно слушать одновременно |
 | `USB_ETH_MAX_TCP_CONNECTIONS` | `4` | одновременных TCP-соединений (на все порты) |
 | `USB_ETH_MAX_UDP_SOCKETS` | `4` | открытых UDP-портов |
-| `USB_ETH_RX_PBUF_POOL_SIZE` | `8` | буферов приёма lwIP (~1.5 КБ ОЗУ каждый); см. "Диагностика потерь" |
+| `USB_ETH_RX_QUEUE_LEN` | `2` | очередь входящих кадров между USB и lwIP (4 байта ОЗУ на кадр); при медленном главном цикле и росте `rx_backpressure` - увеличить |
+| `USB_ETH_RX_PBUF_POOL_SIZE` | `6` | буферов приёма lwIP (~1.5 КБ ОЗУ каждый); см. "Диагностика потерь" |
 | `USB_ETH_HEAP_SIZE` | `16384` | куча lwIP, байт: копии исходящих TCP-данных, UDP, ARP; смотреть `heap_max_used` |
 | `USB_ETH_TCP_SND_SEGS` | `4` | окно отправки TCP на соединение, сегментов по 1460 байт (столько же кучи на соединение, которое шлёт без остановки) |
 | `USB_ETH_TCP_WND_SEGS` | `4` | окно приёма TCP на соединение, сегментов |
+| `USB_ETH_RAM_SECTION` | не задан | имя секции linker-скрипта (например `-DUSB_ETH_RAM_SECTION='".axi_sram"'`) для кучи и пулов lwIP и буферов USB (около 90 % ОЗУ библиотеки); секция в ОЗУ с `NOLOAD`; перед использованием проверить нагрузку - дальняя память медленнее |
+| `USB_ETH_RAM_SECTION_LWIP` / `USB_ETH_RAM_SECTION_USB` | = `USB_ETH_RAM_SECTION` | то же отдельно для lwIP и для буферов USB (перенести только часть) |
 | `USB_ETH_TX_QUEUE_LEN` | `16` | очередь кадров к ПК, ждущих USB (4 байта ОЗУ на кадр); см. "Диагностика потерь" |
 | `USB_ETH_NTB_IN_NUM` | `2` | буферов USB для отправки на ПК (2..4) |
 | `USB_ETH_NTB_IN_SIZE` | `2048` | размер буфера USB для отправки, байт (2048..16384, кратно 4) |
@@ -173,7 +176,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE USB_ETH_MODE=USB_ETH_MODE_CLI
 дают ошибку компиляции, а не тихо игнорируются); файл `usb_eth_desc.c` заменён на
 `usb_dev_desc.c`, добавлены `usb_dev.c`, `usb_com.c` и `tinyusb/src/class/cdc/cdc_device.c`.
 
-Ресурсы (STM32H743, `-Os`): сеть + COM - около 37 КБ flash и 41 КБ ОЗУ, только COM - около
+Ресурсы (STM32H743, `-Os`): сеть + COM - около 37 КБ flash и 38 КБ ОЗУ, только COM - около
 12 КБ flash и 7 КБ ОЗУ. Основная часть ОЗУ сети - буферы lwIP (`USB_ETH_RX_PBUF_POOL_SIZE` и
 `USB_ETH_HEAP_SIZE`); подбор размеров - по `USB_ETH_GetStats()`.
 

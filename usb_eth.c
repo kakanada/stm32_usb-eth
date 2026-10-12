@@ -41,8 +41,8 @@
 /** Сколько ждать освобождения USB-передатчика, прежде чем отбросить кадр. */
 #define USB_ETH_TX_TIMEOUT_MS     20U
 
-/** Очередь входящих кадров между TinyUSB и lwIP (в кадрах). */
-#define USB_ETH_RX_QUEUE_LEN      4U
+/** Сколько входящих кадров передаётся в lwIP за один USB_Process() (дальше - в следующий). */
+#define USB_ETH_RX_BURST          16U
 
 /** Через сколько после подключения USB сообщать, что DHCP не выдал адрес. */
 #define USB_ETH_DHCP_WARN_MS      15000U
@@ -534,22 +534,30 @@ uint32_t sys_now(void)
  */
 static void usb_eth_rx_drain(void)
 {
-    while (s_rx_count > 0U)
-    {
-        struct pbuf *p = s_rx_queue[s_rx_head];
-        s_rx_queue[s_rx_head] = NULL;
-        s_rx_head = (uint8_t)((s_rx_head + 1U) % USB_ETH_RX_QUEUE_LEN);
-        s_rx_count--;
+    uint32_t done = 0U;
 
-        s_stats.rx_frames++;
-        err_t err = s_netif.input(p, &s_netif);
-        if (err != ERR_OK)
+    /* Очередь короткая (экономия ОЗУ), поэтому после опустошения она сразу пополняется из
+     * принятого USB-буфера - за один проход обрабатывается до USB_ETH_RX_BURST кадров */
+    do
+    {
+        while (s_rx_count > 0U)
         {
-            USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_RX_INPUT_FAIL, 0U, err);
-            pbuf_free(p);
+            struct pbuf *p = s_rx_queue[s_rx_head];
+            s_rx_queue[s_rx_head] = NULL;
+            s_rx_head = (uint8_t)((s_rx_head + 1U) % USB_ETH_RX_QUEUE_LEN);
+            s_rx_count--;
+            done++;
+
+            s_stats.rx_frames++;
+            err_t err = s_netif.input(p, &s_netif);
+            if (err != ERR_OK)
+            {
+                USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_RX_INPUT_FAIL, 0U, err);
+                pbuf_free(p);
+            }
         }
-    }
-    tud_network_recv_renew();
+        tud_network_recv_renew();
+    } while ((s_rx_count > 0U) && (done < USB_ETH_RX_BURST));
 }
 
 /**

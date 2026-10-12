@@ -93,12 +93,28 @@
 #define USB_ETH_MAX_UDP_SOCKETS 4U
 #endif
 
+/** Очередь входящих кадров между TinyUSB и lwIP (в кадрах, по 4 байта ОЗУ на кадр + буфер приёма
+ *  lwIP на каждый). Короткая очередь экономит ОЗУ: после опустошения она сразу пополняется,
+ *  скорость приёма не падает. Если в USB_ETH_GetStats() часто растёт rx_backpressure при
+ *  медленном главном цикле - увеличить (вместе с USB_ETH_RX_PBUF_POOL_SIZE). */
+#ifndef USB_ETH_RX_QUEUE_LEN
+#define USB_ETH_RX_QUEUE_LEN 2U
+#endif
+
+#if (USB_ETH_RX_QUEUE_LEN < 1) || (USB_ETH_RX_QUEUE_LEN > 8)
+#error "USB_ETH_RX_QUEUE_LEN: допустимо 1..8"
+#endif
+
 /** Число буферов lwIP для входящих кадров (PBUF_POOL_SIZE), по ~1.5 КБ ОЗУ каждый. Любой
  *  кадр, даже 60-байтный, занимает целый буфер. Их держат: очередь приёма (до 4), сегменты
  *  TCP, пришедшие не по порядку, - на каждое соединение. Если в USB_ETH_GetStats() растёт
  *  rx_drop_no_pbuf или pbuf_pool_max_used равен pbuf_pool_size - увеличить. */
 #ifndef USB_ETH_RX_PBUF_POOL_SIZE
-#define USB_ETH_RX_PBUF_POOL_SIZE 8
+#define USB_ETH_RX_PBUF_POOL_SIZE 6
+#endif
+
+#if USB_ETH_RX_PBUF_POOL_SIZE < (USB_ETH_RX_QUEUE_LEN + 2)
+#error "USB_ETH_RX_PBUF_POOL_SIZE: не меньше USB_ETH_RX_QUEUE_LEN + 2"
 #endif
 
 /** Куча lwIP, байт: копии исходящих TCP-данных (до 5840 на соединение), пакеты UDP и ARP.
@@ -106,6 +122,25 @@
  *  памяти - увеличить; при большом запасе - уменьшить. */
 #ifndef USB_ETH_HEAP_SIZE
 #define USB_ETH_HEAP_SIZE 16384U
+#endif
+
+/** Секция памяти для больших массивов библиотеки (по умолчанию не задана - массивы лежат там же,
+ *  где остальные статические данные проекта). Задаётся глобальным define с именем секции из
+ *  linker-скрипта проекта, например -DUSB_ETH_RAM_SECTION='".axi_sram"'. Переносится около
+ *  90 % ОЗУ библиотеки: куча и пулы lwIP (буферы приёма, сегменты TCP...) и буферы USB
+ *  TinyUSB (NCM). В linker-скрипте проекта секция должна лежать в ОЗУ и быть без загрузки из
+ *  flash (NOLOAD): без неё образ раздуется. Начальное содержимое произвольное - библиотека не
+ *  рассчитывает на нули в этих массивах. Скорость: ближняя к ядру память
+ *  (DTCM на H7) быстрее, дальняя (AXI SRAM, SRAM1..3) даёт больше простоя ядра при
+ *  выключенном кеше данных - см. USB_ETH_GetStats() и замеры нагрузки перед выбором.
+ *  Отдельно можно перенести только часть:
+ *    USB_ETH_RAM_SECTION_LWIP - куча и пулы lwIP (по умолчанию = USB_ETH_RAM_SECTION),
+ *    USB_ETH_RAM_SECTION_USB  - буферы USB TinyUSB (по умолчанию = USB_ETH_RAM_SECTION). */
+#if defined(USB_ETH_RAM_SECTION) && !defined(USB_ETH_RAM_SECTION_LWIP)
+#define USB_ETH_RAM_SECTION_LWIP USB_ETH_RAM_SECTION
+#endif
+#if defined(USB_ETH_RAM_SECTION) && !defined(USB_ETH_RAM_SECTION_USB)
+#define USB_ETH_RAM_SECTION_USB USB_ETH_RAM_SECTION
 #endif
 
 /** Окно отправки TCP на соединение, в сегментах по 1460 байт: сколько данных может быть

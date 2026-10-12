@@ -58,7 +58,12 @@ extern "C" {
 /* Сработавшая внутренняя проверка TinyUSB (TU_ASSERT) пишется в лог (usb_dev.c) */
 #define CFG_TUSB_DEBUG_BREAKPOINT usb_dev_tusb_assert
 #endif
+#ifdef USB_ETH_RAM_SECTION_USB
+/* Буферы USB (NCM, CDC) - в выбранную секцию памяти, см. usb_dev_opts.h */
+#define CFG_TUSB_MEM_SECTION __attribute__((section(USB_ETH_RAM_SECTION_USB)))
+#else
 #define CFG_TUSB_MEM_SECTION
+#endif
 #define CFG_TUSB_MEM_ALIGN   __attribute__((aligned(4)))
 
 /* --- Только устройство, Full Speed --- */

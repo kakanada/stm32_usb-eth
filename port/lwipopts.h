@@ -42,6 +42,11 @@ uint16_t usb_eth_chksum_copy(void *dst, const void *src, uint16_t len);
 /* --- Память: куча lwIP для исходящих TCP-данных (TCP_WRITE_FLAG_COPY) --- */
 #define MEM_ALIGNMENT                   4
 #define MEM_SIZE                        USB_ETH_HEAP_SIZE
+#ifdef USB_ETH_RAM_SECTION_LWIP
+/* Куча и все пулы lwIP (memp) - в выбранную секцию памяти (см. usb_dev_opts.h) */
+#define LWIP_DECLARE_MEMORY_ALIGNED(variable_name, size) \
+    u8_t variable_name[LWIP_MEM_ALIGN_BUFFER(size)] __attribute__((section(USB_ETH_RAM_SECTION_LWIP)))
+#endif
 #define PBUF_POOL_SIZE                  USB_ETH_RX_PBUF_POOL_SIZE   /* входящие кадры */
 
 /* --- Протоколы --- */
@@ -57,6 +62,15 @@ uint16_t usb_eth_chksum_copy(void *dst, const void *src, uint16_t len);
  * MTU - экономит ОЗУ (пулы и буфер сборки). Фрагментированная от ПК датаграмма теряется. */
 #define IP_REASSEMBLY                   0
 #define IP_FRAG                         0
+
+/* Таблица ARP: в режиме HOST собеседник один (ПК), в CLIENT - ещё шлюз и хосты сети */
+#if (USB_ETH_MODE == USB_ETH_MODE_CLIENT)
+#define ARP_TABLE_SIZE                  10
+#else
+#define ARP_TABLE_SIZE                  4
+#endif
+/* Пул pbuf без памяти данных (REF/ROM) не используется - TCP копирует данные в кучу */
+#define MEMP_NUM_PBUF                   4
 
 #if (USB_ETH_MODE == USB_ETH_MODE_CLIENT)
 #define LWIP_DHCP                       1
