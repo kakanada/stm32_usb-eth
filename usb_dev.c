@@ -461,7 +461,7 @@ void USB_Process(void)
         return;   /* не ошибка: Init ещё не вызывался */
     }
     USB_PROF_BEGIN(proc);
-    if (tud_task_event_ready())   /* без событий USB tud_task() ничего не делает - не вызываем */
+    if (((USB_ETH_IDLE_OPT & 1U) == 0U) || tud_task_event_ready())   /* без событий USB tud_task() ничего не делает */
     {
         USB_PROF_BEGIN(task);
         tud_task();
@@ -471,7 +471,7 @@ void USB_Process(void)
     /* Медленные задачи (состояние, таймеры, лог) - раз в миллисекунду: холостой проход
      * главного цикла остаётся дешёвым, а реакция на события USB - прежней по порядку величины. */
     uint32_t now = HAL_GetTick();
-    bool slow = (now != s_slow_tick);
+    bool slow = ((USB_ETH_IDLE_OPT & 2U) == 0U) || (now != s_slow_tick);
     if (slow)
     {
         s_slow_tick = now;

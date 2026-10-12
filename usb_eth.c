@@ -771,7 +771,7 @@ static void usb_eth_process(bool slow)
     usb_eth_tx_drain();     /* буферы USB, освободившиеся в tud_task() */
     /* Приём - когда есть кадры, ждал освобождения очереди, и раз в мс (на случай, если
      * приём USB надо подтолкнуть) */
-    if (slow || s_rx_stalled || (s_rx_count > 0U))
+    if (((USB_ETH_IDLE_OPT & 4U) == 0U) || slow || s_rx_stalled || (s_rx_count > 0U))
     {
         usb_eth_rx_drain();
     }

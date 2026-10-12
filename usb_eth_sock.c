@@ -411,7 +411,7 @@ void usb_eth_sock_output(void)
      * (например, длинная выдача лога) не стоит в выдаче всегда первым */
     static uint8_t first;
 
-    if (!s_tx_any)
+    if (((USB_ETH_IDLE_OPT & 8U) != 0U) && !s_tx_any)
     {
         return;   /* нечего отправлять - холостой проход главного цикла дешёвый */
     }
