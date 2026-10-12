@@ -132,6 +132,29 @@ static void usb_eth_tcp_detach(struct tcp_pcb *pcb)
  * @param conn   соединение
  * @param reason причина закрытия
  */
+/**
+ * @brief Подтверждает ПК приём len байт (открывает окно приёма TCP). Не более, чем ждёт
+ *        подтверждения при ручном режиме (USB_ETH_TCP_SetManualAck).
+ * @param conn открытое соединение
+ * @param len  сколько байт подтвердить
+ */
+static void usb_eth_tcp_ack_bytes(USB_ETH_TcpConn_t *conn, uint32_t len)
+{
+    struct tcp_pcb *pcb = (struct tcp_pcb *)conn->pcb;
+
+    if (len > conn->ack_pending)
+    {
+        len = conn->ack_pending;
+    }
+    conn->ack_pending -= len;
+    while (len > 0U)
+    {
+        uint16_t n = (len > 0xFFFFU) ? 0xFFFFU : (uint16_t)len;
+        tcp_recved(pcb, n);
+        len -= n;
+    }
+}
+
 static void usb_eth_conn_release(USB_ETH_TcpConn_t *conn, USB_ETH_CloseReason_t reason)
 {
     USB_ETH_TcpServer_t *server = conn->server;
@@ -205,6 +228,7 @@ static err_t usb_eth_tcp_recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p,
         {
             pbuf_free(p);
         }
+        usb_eth_tcp_ack_bytes(conn, conn->ack_pending);   /* без RST из-за "непрочитанного" */
         usb_eth_tcp_detach(pcb);
         usb_eth_tcp_shutdown(pcb);
         usb_eth_conn_release(conn, USB_ETH_CLOSE_REMOTE);
@@ -214,7 +238,14 @@ static err_t usb_eth_tcp_recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p,
     /* Окно подтверждаем ДО передачи пользователю: если он закроет
      * соединение прямо в on_receive, lwIP не станет отвечать RST из-за
      * "непрочитанных" данных. */
-    tcp_recved(pcb, p->tot_len);
+    if (conn->manual_ack != 0U)
+    {
+        conn->ack_pending += p->tot_len;   /* подтвердит приложение: USB_ETH_TCP_Ack() */
+    }
+    else
+    {
+        tcp_recved(pcb, p->tot_len);
+    }
 
     const USB_ETH_TcpHandlers_t *h = &conn->server->handlers;
     for (struct pbuf *q = p; q != NULL; q = q->next)
@@ -226,6 +257,10 @@ static err_t usb_eth_tcp_recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p,
         USB_PROF_BEGIN(app);
         h->on_receive(conn, (const uint8_t *)q->payload, q->len);
         USB_PROF_END(app, USB_PROF_APP_RX, q->len);
+    }
+    if ((h->on_receive == NULL) && (conn->pcb == pcb))
+    {
+        usb_eth_tcp_ack_bytes(conn, conn->ack_pending);   /* некому подтверждать - сразу */
     }
     pbuf_free(p);
     return usb_eth_tcp_cb_result(pcb);
@@ -369,11 +404,18 @@ static void usb_eth_tcp_output(USB_ETH_TcpConn_t *conn)
 
 void usb_eth_sock_output(void)
 {
-    for (uint32_t i = 0U; i < USB_ETH_MAX_TCP_CONNECTIONS; i++)
+    /* Начинаем с другого соединения каждый проход: при общей очереди USB ни одно соединение
+     * (например, длинная выдача лога) не стоит в выдаче всегда первым */
+    static uint8_t first;
+
+    first = (uint8_t)((first + 1U) % USB_ETH_MAX_TCP_CONNECTIONS);
+    for (uint32_t k = 0U; k < USB_ETH_MAX_TCP_CONNECTIONS; k++)
     {
-        if (usb_eth_conn_valid(&s_conns[i]))
+        USB_ETH_TcpConn_t *conn = &s_conns[(first + k) % USB_ETH_MAX_TCP_CONNECTIONS];
+
+        if (usb_eth_conn_valid(conn))
         {
-            usb_eth_tcp_output(&s_conns[i]);
+            usb_eth_tcp_output(conn);
         }
     }
 }
@@ -455,6 +497,7 @@ HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, ui
     if (len > USB_ETH_TCP_GetFreeSpace(conn))
     {
         usb_eth_tcp_output(conn);   /* место освободится после отправки и подтверждения */
+        usb_eth_count_send_busy();
         return HAL_BUSY;
     }
 
@@ -468,6 +511,7 @@ HAL_StatusTypeDef USB_ETH_TCP_Send(USB_ETH_TcpConn_t *conn, const void *data, ui
     {
         USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_SEND_NO_MEM, conn->server->port, len);
         usb_eth_tcp_output(conn);   /* освободить очередь как можно раньше */
+        usb_eth_count_send_busy();
         return HAL_BUSY;
     }
     if (err != ERR_OK)
@@ -528,9 +572,36 @@ HAL_StatusTypeDef USB_ETH_TCP_Close(USB_ETH_TcpConn_t *conn)
         return HAL_ERROR;
     }
     struct tcp_pcb *pcb = (struct tcp_pcb *)conn->pcb;
+    usb_eth_tcp_ack_bytes(conn, conn->ack_pending);   /* без RST из-за "непрочитанного" */
     usb_eth_tcp_detach(pcb);
     usb_eth_tcp_shutdown(pcb);
     usb_eth_conn_release(conn, USB_ETH_CLOSE_LOCAL);
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef USB_ETH_TCP_SetManualAck(USB_ETH_TcpConn_t *conn, bool enable)
+{
+    if (usb_eth_api_bad(USB_DEV_API_TCP_ACK, false, false) ||
+        usb_eth_conn_bad(USB_DEV_API_TCP_ACK, conn))
+    {
+        return HAL_ERROR;
+    }
+    if (!enable)
+    {
+        usb_eth_tcp_ack_bytes(conn, conn->ack_pending);   /* накопленное - сразу */
+    }
+    conn->manual_ack = enable ? 1U : 0U;
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef USB_ETH_TCP_Ack(USB_ETH_TcpConn_t *conn, uint32_t len)
+{
+    if (usb_eth_api_bad(USB_DEV_API_TCP_ACK, false, false) ||
+        usb_eth_conn_bad(USB_DEV_API_TCP_ACK, conn))
+    {
+        return HAL_ERROR;
+    }
+    usb_eth_tcp_ack_bytes(conn, len);
     return HAL_OK;
 }
 

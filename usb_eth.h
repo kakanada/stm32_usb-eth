@@ -77,6 +77,8 @@ struct USB_ETH_TcpConn_s
     void *pcb;                     /**< struct tcp_pcb* lwIP; NULL - соединение закрыто */
     uint8_t used;                  /**< слот пула занят */
     uint8_t tx_pending;            /**< есть данные для отправки в USB_Process() */
+    uint8_t manual_ack;            /**< окно приёма открывает приложение (USB_ETH_TCP_SetManualAck) */
+    uint32_t ack_pending;          /**< принято, но не подтверждено приложением, байт */
 };
 
 /** TCP-сервер (слушающий порт, слот статического пула). */
@@ -191,6 +193,7 @@ typedef struct
     uint16_t tx_queue_len;       /**< USB_ETH_TX_QUEUE_LEN */
     uint16_t tx_queue_max_used;  /**< максимум кадров в очереди отправки (ждали USB);
                                       дошло до tx_queue_len - увеличить очередь */
+    uint32_t tcp_send_busy;      /**< раз USB_ETH_TCP_Send вернул HAL_BUSY (нет места в окне или куче) */
     uint16_t heap_size;          /**< USB_ETH_HEAP_SIZE, байт */
     uint16_t heap_max_used;      /**< максимум занятой кучи lwIP, байт */
 } USB_ETH_Stats_t;
@@ -249,6 +252,30 @@ HAL_StatusTypeDef USB_ETH_TCP_SendString(USB_ETH_TcpConn_t *conn, const char *st
  * @return HAL_OK; HAL_ERROR - соединение закрыто/неверный параметр
  */
 HAL_StatusTypeDef USB_ETH_TCP_Flush(USB_ETH_TcpConn_t *conn);
+
+/**
+ * @brief  Включает ручное подтверждение приёма для соединения (обычно в on_connect). По
+ *         умолчанию выключено: принятые данные подтверждаются ПК сразу при передаче в
+ *         on_receive. В ручном режиме окно приёма TCP открывается только вызовом
+ *         USB_ETH_TCP_Ack(): ПК не пришлёт больше окна (TCP_WND = USB_ETH_TCP_WND_SEGS x 1460
+ *         байт) неподтверждённых данных, а значит, приёмный буфер приложения размером не
+ *         меньше окна не переполнится. Если приложение перестанет подтверждать, ПК остановится
+ *         (его write() блокируется) до подтверждения. Выключение подтверждает всё накопленное.
+ * @param  conn   соединение
+ * @param  enable true - ручной режим
+ * @return HAL_OK; HAL_ERROR - соединение закрыто, NULL, вызов из прерывания
+ */
+HAL_StatusTypeDef USB_ETH_TCP_SetManualAck(USB_ETH_TcpConn_t *conn, bool enable);
+
+/**
+ * @brief  Подтверждает ПК приём len байт (в ручном режиме, из основного цикла): открывает
+ *         окно приёма на столько же. Подтвердить больше, чем принято и не подтверждено, нельзя
+ *         (лишнее игнорируется). Вне ручного режима ничего не делает (нечего подтверждать).
+ * @param  conn соединение
+ * @param  len  сколько байт приложение уже разобрало
+ * @return HAL_OK; HAL_ERROR - соединение закрыто, NULL, вызов из прерывания
+ */
+HAL_StatusTypeDef USB_ETH_TCP_Ack(USB_ETH_TcpConn_t *conn, uint32_t len);
 
 /**
  * @brief  Сколько байт сейчас гарантированно примет USB_ETH_TCP_Send().

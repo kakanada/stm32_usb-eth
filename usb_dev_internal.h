@@ -81,6 +81,7 @@ extern volatile uint32_t usb_prof_isr_total;
 #define USB_DEV_API_UDP_BIND         22U  /**< USB_ETH_UDP_Bind */
 #define USB_DEV_API_UDP_SEND         23U  /**< USB_ETH_UDP_SendTo */
 #define USB_DEV_API_TCP_FLUSH        24U  /**< USB_ETH_TCP_Flush */
+#define USB_DEV_API_TCP_ACK          25U  /**< USB_ETH_TCP_Ack / SetManualAck */
 
 /* Значение (value) для кодов API_ERROR: причина отказа. */
 #define USB_DEV_API_ERR_ISR          1    /**< вызов из прерывания */

@@ -38,6 +38,9 @@ static inline bool usb_eth_in_isr(void)
  */
 bool usb_eth_is_ready(void);
 
+/** @brief Считает отказ USB_ETH_TCP_Send с HAL_BUSY (в USB_ETH_GetStats). */
+void usb_eth_count_send_busy(void);
+
 /**
  * @brief Аварийно закрывает все TCP-соединения с причиной LINK_LOST
  *        (вызывается ядром при потере сети).

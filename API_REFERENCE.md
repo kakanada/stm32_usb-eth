@@ -150,6 +150,7 @@ uint16_t remote_port)` - принята датаграмма; `data` дейст�
 | `tx_drop_no_usb` | кадров к ПК потеряно: USB не подключён |
 | `pbuf_pool_size` | `USB_ETH_RX_PBUF_POOL_SIZE` |
 | `pbuf_pool_max_used` | максимум одновременно занятых буферов приёма |
+| `tcp_send_busy` | раз `USB_ETH_TCP_Send` вернул `HAL_BUSY` (нет места в окне или куче) |
 | `tx_queue_len` | `USB_ETH_TX_QUEUE_LEN` |
 | `tx_queue_max_used` | максимум кадров в очереди отправки; дошёл до `tx_queue_len` - увеличить |
 | `heap_size` | `USB_ETH_HEAP_SIZE`, байт |
@@ -244,6 +245,23 @@ UDP-сокеты удаляются (указатели на них недейс
 ### `uint16_t USB_ETH_TCP_GetFreeSpace(const USB_ETH_TcpConn_t *conn)`
 
 Сколько байт сейчас гарантированно примет `USB_ETH_TCP_Send()`; `0`, если соединение закрыто.
+
+### `HAL_StatusTypeDef USB_ETH_TCP_SetManualAck(USB_ETH_TcpConn_t *conn, bool enable)`
+
+Включает ручное подтверждение приёма для соединения (обычно в `on_connect`). По умолчанию
+выключено: принятые данные подтверждаются ПК сразу при передаче в `on_receive`. В ручном режиме
+окно приёма TCP открывается только вызовом `USB_ETH_TCP_Ack()`: ПК не пришлёт больше окна
+(`USB_ETH_TCP_WND_SEGS` x 1460 байт) неподтверждённых данных, значит, приёмный буфер приложения
+не меньше окна не переполнится. Если приложение перестанет подтверждать, ПК остановится (его
+`write()` блокируется) до подтверждения. Выключение подтверждает накопленное. Без
+`on_receive` данные подтверждаются сразу.
+
+### `HAL_StatusTypeDef USB_ETH_TCP_Ack(USB_ETH_TcpConn_t *conn, uint32_t len)`
+
+Подтверждает ПК приём `len` байт (вызывать из основного цикла, когда приложение разобрало
+данные). Больше, чем принято и не подтверждено, подтвердить нельзя (лишнее игнорируется). Вне
+ручного режима ничего не делает. Мелкие подтверждения копятся: окно ПК обновляется, когда
+накопилось не меньше 1460 байт, поэтому подтверждать лучше пачкой за проход цикла.
 
 ### `bool USB_ETH_TCP_IsOpen(const USB_ETH_TcpConn_t *conn)`
 
@@ -424,7 +442,7 @@ COM не подключён.
 `TransmitString`, 5 `USB_COM_Read` / `Available` / `GetFreeSpace`, 16 `USB_ETH_Init`,
 17 `USB_ETH_DeInit`, 18 `USB_ETH_GetStats`, 19 `USB_ETH_TCP_Listen`, 20 `USB_ETH_TCP_Send` /
 `SendString`, 21 `USB_ETH_TCP_Close`, 22 `USB_ETH_UDP_Bind`, 23 `USB_ETH_UDP_SendTo`,
-24 `USB_ETH_TCP_Flush`.
+24 `USB_ETH_TCP_Flush`, 25 `USB_ETH_TCP_Ack` / `SetManualAck`.
 
 (3) Причина: 1 вызов из прерывания, 2 модуль не включён / сеть не поднята, 3 неверный параметр,
 4 соединение или сокет уже закрыт, 5 `Init` во время `DeInit`.

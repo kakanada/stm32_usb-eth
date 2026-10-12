@@ -41,8 +41,6 @@
 /** Сколько ждать освобождения USB-передатчика, прежде чем отбросить кадр. */
 #define USB_ETH_TX_TIMEOUT_MS     20U
 
-/** Сколько входящих кадров передаётся в lwIP за один USB_Process() (дальше - в следующий). */
-#define USB_ETH_RX_BURST          16U
 
 /** Через сколько после подключения USB сообщать, что DHCP не выдал адрес. */
 #define USB_ETH_DHCP_WARN_MS      15000U
@@ -943,6 +941,11 @@ HAL_StatusTypeDef USB_ETH_GetStats(USB_ETH_Stats_t *stats)
 bool usb_eth_is_ready(void)
 {
     return s_initialized;
+}
+
+void usb_eth_count_send_busy(void)
+{
+    s_stats.tcp_send_busy++;
 }
 
 uint32_t usb_eth_rand(void)
