@@ -881,6 +881,8 @@ HAL_StatusTypeDef USB_ETH_GetStats(USB_ETH_Stats_t *stats)
     stats->pbuf_pool_size = (uint16_t)USB_ETH_RX_PBUF_POOL_SIZE;
     stats->pbuf_pool_max_used = (uint16_t)lwip_stats.memp[MEMP_PBUF_POOL]->max;
     stats->tx_queue_len = (uint16_t)USB_ETH_TX_QUEUE_LEN;
+    stats->heap_size = (uint16_t)USB_ETH_HEAP_SIZE;
+    stats->heap_max_used = (uint16_t)lwip_stats.mem.max;
     return HAL_OK;
 }
 

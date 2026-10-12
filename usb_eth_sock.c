@@ -49,9 +49,6 @@ static USB_ETH_UdpSocket_t s_udp[USB_ETH_MAX_UDP_SOCKETS];
  * обязан вернуть ERR_ABRT (требование lwIP raw API). */
 static struct tcp_pcb *s_aborted_pcb;
 
-/* Буфер для склейки UDP-датаграммы, пришедшей цепочкой pbuf. */
-static uint8_t s_udp_rx_buf[USB_ETH_UDP_MAX_PAYLOAD];
-
 /* ------------------------------------------------------------------------- */
 /*  TCP: внутренние функции                                                  */
 /* ------------------------------------------------------------------------- */
@@ -606,19 +603,17 @@ static void usb_eth_udp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p,
 
     if ((sock != NULL) && (sock->used != 0U) && (sock->on_receive != NULL))
     {
-        const uint8_t *data = (const uint8_t *)p->payload;
-        uint16_t len = p->len;
         if (p->next != NULL)
         {
-            /* Датаграмма в нескольких pbuf - склеиваем в один буфер */
-            if (p->tot_len > sizeof(s_udp_rx_buf))
-            {
-                USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_UDP_RX_TRUNC, sock->port, p->tot_len);
-            }
-            len = pbuf_copy_partial(p, s_udp_rx_buf, sizeof(s_udp_rx_buf), 0U);
-            data = s_udp_rx_buf;
+            /* Кадр целиком лежит в одном буфере приёма, цепочка возможна только у
+             * фрагментов IP, а они не собираются - датаграмма теряется */
+            USB_ETH_LOG_ERR(USB_ETH_LOG_CODE_UDP_RX_TRUNC, sock->port, p->tot_len);
         }
-        sock->on_receive(sock, data, len, lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(addr))), port);
+        else
+        {
+            sock->on_receive(sock, (const uint8_t *)p->payload, p->len,
+                             lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(addr))), port);
+        }
     }
     pbuf_free(p);
 }

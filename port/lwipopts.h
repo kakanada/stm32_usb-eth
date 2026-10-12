@@ -41,7 +41,7 @@ uint16_t usb_eth_chksum_copy(void *dst, const void *src, uint16_t len);
 
 /* --- Память: куча lwIP для исходящих TCP-данных (TCP_WRITE_FLAG_COPY) --- */
 #define MEM_ALIGNMENT                   4
-#define MEM_SIZE                        (16 * 1024)
+#define MEM_SIZE                        USB_ETH_HEAP_SIZE
 #define PBUF_POOL_SIZE                  USB_ETH_RX_PBUF_POOL_SIZE   /* входящие кадры */
 
 /* --- Протоколы --- */
@@ -53,6 +53,10 @@ uint16_t usb_eth_chksum_copy(void *dst, const void *src, uint16_t len);
 #define LWIP_TCP                        1
 #define ETH_PAD_SIZE                    0
 #define ETHARP_SUPPORT_STATIC_ENTRIES   0
+/* Фрагменты IP не собираются и не режутся: USB MTU 1500, TCP и USB_ETH_UDP_SendTo не больше
+ * MTU - экономит ОЗУ (пулы и буфер сборки). Фрагментированная от ПК датаграмма теряется. */
+#define IP_REASSEMBLY                   0
+#define IP_FRAG                         0
 
 #if (USB_ETH_MODE == USB_ETH_MODE_CLIENT)
 #define LWIP_DHCP                       1
@@ -66,9 +70,9 @@ uint16_t usb_eth_chksum_copy(void *dst, const void *src, uint16_t len);
 
 /* --- TCP --- */
 #define TCP_MSS                         (1500 - 40)
-#define TCP_SND_BUF                     (4 * TCP_MSS)
-#define TCP_WND                         (4 * TCP_MSS)
-#define TCP_SND_QUEUELEN                ((4 * TCP_SND_BUF) / TCP_MSS)
+#define TCP_SND_BUF                     (USB_ETH_TCP_SND_SEGS * TCP_MSS)
+#define TCP_WND                         (USB_ETH_TCP_WND_SEGS * TCP_MSS)
+#define TCP_SND_QUEUELEN                (4 * USB_ETH_TCP_SND_SEGS)
 #define LWIP_TCP_KEEPALIVE              1
 /* Контрольная сумма TCP считается при копировании данных в tcp_write (одним проходом -
  * usb_eth_chksum_copy), остальные суммы - 32-битным алгоритмом lwIP */
@@ -91,7 +95,7 @@ uint16_t usb_eth_chksum_copy(void *dst, const void *src, uint16_t len);
 /* --- Статистика: занятость пулов (USB_ETH_GetStats) и отказы памяти (лог) --- */
 #define LWIP_STATS                      1
 #define MEMP_STATS                      1
-#define MEM_STATS                       USB_DEV_LOG_ENABLE   /* отказы кучи - в лог */
+#define MEM_STATS                       1   /* USB_ETH_GetStats: пик кучи; отказы кучи - в лог */
 #define LINK_STATS                      0
 #define ETHARP_STATS                    0
 #define IP_STATS                        0

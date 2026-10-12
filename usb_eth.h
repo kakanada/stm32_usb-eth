@@ -191,6 +191,8 @@ typedef struct
     uint16_t tx_queue_len;       /**< USB_ETH_TX_QUEUE_LEN */
     uint16_t tx_queue_max_used;  /**< максимум кадров в очереди отправки (ждали USB);
                                       дошло до tx_queue_len - увеличить очередь */
+    uint16_t heap_size;          /**< USB_ETH_HEAP_SIZE, байт */
+    uint16_t heap_max_used;      /**< максимум занятой кучи lwIP, байт */
 } USB_ETH_Stats_t;
 
 /**

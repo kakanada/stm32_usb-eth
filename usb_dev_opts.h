@@ -96,9 +96,35 @@
 /** Число буферов lwIP для входящих кадров (PBUF_POOL_SIZE), по ~1.5 КБ ОЗУ каждый. Любой
  *  кадр, даже 60-байтный, занимает целый буфер. Их держат: очередь приёма (до 4), сегменты
  *  TCP, пришедшие не по порядку, - на каждое соединение. Если в USB_ETH_GetStats() растёт
- *  rx_drop_no_pbuf - увеличить. */
+ *  rx_drop_no_pbuf или pbuf_pool_max_used равен pbuf_pool_size - увеличить. */
 #ifndef USB_ETH_RX_PBUF_POOL_SIZE
-#define USB_ETH_RX_PBUF_POOL_SIZE 16
+#define USB_ETH_RX_PBUF_POOL_SIZE 8
+#endif
+
+/** Куча lwIP, байт: копии исходящих TCP-данных (до 5840 на соединение), пакеты UDP и ARP.
+ *  Если в USB_ETH_GetStats() heap_max_used подходит к heap_size или в логе появились отказы
+ *  памяти - увеличить; при большом запасе - уменьшить. */
+#ifndef USB_ETH_HEAP_SIZE
+#define USB_ETH_HEAP_SIZE 16384U
+#endif
+
+/** Окно отправки TCP на соединение, в сегментах по 1460 байт: сколько данных может быть
+ *  отправлено, но ещё не подтверждено ПК. Столько же ОЗУ кучи занимает каждое соединение,
+ *  которое шлёт без остановки (4 сегмента = 5840 байт). Меньше - меньше ОЗУ, но на медленном
+ *  ответе ПК падает скорость. */
+#ifndef USB_ETH_TCP_SND_SEGS
+#define USB_ETH_TCP_SND_SEGS 4U
+#endif
+
+/** Окно приёма TCP на соединение, в сегментах. Столько кадров от ПК может прийти вперёд, пока
+ *  не дошёл потерянный; они лежат в буферах приёма (USB_ETH_RX_PBUF_POOL_SIZE). */
+#ifndef USB_ETH_TCP_WND_SEGS
+#define USB_ETH_TCP_WND_SEGS 4U
+#endif
+
+#if (USB_ETH_TCP_SND_SEGS < 2) || (USB_ETH_TCP_SND_SEGS > 16) || (USB_ETH_TCP_WND_SEGS < 1) || \
+    (USB_ETH_TCP_WND_SEGS > 16)
+#error "USB_ETH_TCP_SND_SEGS: допустимо 2..16, USB_ETH_TCP_WND_SEGS: 1..16"
 #endif
 
 /** Очередь исходящих кадров, ждущих свободного буфера USB (по 4 байта ОЗУ на кадр, сами
@@ -355,7 +381,7 @@
 #define USB_ETH_LOG_CODE_TCP_ACCEPT_ERR 0x4219U /**< MEDIUM: lwIP сообщил ошибку при входящем подключении, src = порт, value = код lwIP */
 #endif
 #ifndef USB_ETH_LOG_CODE_UDP_RX_TRUNC
-#define USB_ETH_LOG_CODE_UDP_RX_TRUNC  0x421AU /**< MEDIUM: входящая датаграмма обрезана до USB_ETH_UDP_MAX_PAYLOAD, src = порт, value = длина */
+#define USB_ETH_LOG_CODE_UDP_RX_TRUNC  0x421AU /**< MEDIUM: входящая датаграмма больше 1472 байт (фрагменты не собираются) отброшена, src = порт, value = длина */
 #endif
 
 #endif /* USB_DEV_OPTS_H */
