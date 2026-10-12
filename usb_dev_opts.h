@@ -110,7 +110,7 @@
  *  TCP, пришедшие не по порядку, - на каждое соединение. Если в USB_ETH_GetStats() растёт
  *  rx_drop_no_pbuf или pbuf_pool_max_used равен pbuf_pool_size - увеличить. */
 #ifndef USB_ETH_RX_PBUF_POOL_SIZE
-#define USB_ETH_RX_PBUF_POOL_SIZE 6
+#define USB_ETH_RX_PBUF_POOL_SIZE 8
 #endif
 
 #if USB_ETH_RX_PBUF_POOL_SIZE < (USB_ETH_RX_QUEUE_LEN + 2)
@@ -167,7 +167,7 @@
  *  процессор. Если в USB_ETH_GetStats() tx_queue_max_used дошёл до tx_queue_len -
  *  увеличить. Не больше 255. */
 #ifndef USB_ETH_TX_QUEUE_LEN
-#define USB_ETH_TX_QUEUE_LEN 16U
+#define USB_ETH_TX_QUEUE_LEN 32U
 #endif
 
 #if (USB_ETH_TX_QUEUE_LEN < 1) || (USB_ETH_TX_QUEUE_LEN > 255)
