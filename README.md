@@ -121,7 +121,7 @@ lwip/src/netif/ethernet.c
 ```
 
 Пути include: `usb_eth/`, `usb_eth/port/`, `tinyusb/src/`, `tinyusb/lib/networking/`,
-`lwip/src/include/` (и папку `stm32_logger`, если логирование включено).
+`lwip/src/include/` (и папку `stm32_logger/device_master` (с версии 2.0), если логирование включено).
 
 Если в проекте включён `-Werror`, для файлов TinyUSB/lwIP его стоит отключить
 (`-Wno-error`): их исходники содержат безобидные предупреждения, а править чужой код не нужно.
@@ -157,7 +157,7 @@ define всё работает: сеть в режиме HOST, USB-порт OTG_
 | `USB_ETH_TCP_WND_SEGS` | `4` | окно приёма TCP на соединение, сегментов |
 | `USB_ETH_IDLE_OPT` | `15` | диагностика: маска упрощений холостого прохода `USB_Process()` (1 - `tud_task` по событиям, 2 - медленные задачи раз в мс, 4 - приём по наличию кадров, 8 - отправка по наличию данных; 0 - как до оптимизации) |
 | `USB_ETH_PROFILE` | `0` | `1` - счётчики времени по этапам USB и сети (`USB_ProfileReset()`, `USB_GetProfile()`, такты DWT); для поиска узких мест, Cortex-M3 и старше |
-| `USB_ETH_RAM_SECTION` | не задан | имя секции linker-скрипта (например `-DUSB_ETH_RAM_SECTION='".axi_sram"'`) для кучи и пулов lwIP и буферов USB (около 90 % ОЗУ библиотеки); секция в ОЗУ с `NOLOAD`; перед использованием проверить нагрузку - дальняя память медленнее |
+| `USB_ETH_RAM_SECTION` | не задан | имя секции linker-скрипта (пример для H7 - в CUBEMX_SETUP.md, раздел "Linker") (например `-DUSB_ETH_RAM_SECTION='".axi_sram"'`) для кучи и пулов lwIP и буферов USB (около 90 % ОЗУ библиотеки); секция в ОЗУ с `NOLOAD`; перед использованием проверить нагрузку - дальняя память медленнее |
 | `USB_ETH_RAM_SECTION_LWIP` / `USB_ETH_RAM_SECTION_USB` | = `USB_ETH_RAM_SECTION` | то же отдельно для lwIP и для буферов USB (перенести только часть) |
 | `USB_ETH_TX_QUEUE_LEN` | `32` | очередь кадров к ПК, ждущих USB (4 байта ОЗУ на кадр); см. "Диагностика потерь" |
 | `USB_ETH_NTB_IN_NUM` | `2` | буферов USB для отправки на ПК (2..4) |
